@@ -1,5 +1,5 @@
 TARGETS = client server
-C_SV = dhcpd.c
+C_SV = dhcpd.c queue.c
 C_CL = dhcpc.c
 
 all: $(TARGETS)

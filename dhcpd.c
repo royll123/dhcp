@@ -4,7 +4,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 #include "dhcp_common.h"
+#include "queue.h"
 
 #define STAT_WAIT_DISCOVER  1
 #define STAT_WAIT_REQUEST   2
@@ -26,6 +28,7 @@ struct client {
 };
 struct client client_list; /* クライアントリストのリストヘッド */
 
+void read_config(char*);
 
 int main(int argc, char* argv[])
 {
@@ -37,7 +40,16 @@ int main(int argc, char* argv[])
     struct sockaddr_in myskt;
     struct sockaddr_in skt;
     socklen_t sktlen = sizeof(skt);
-    
+	
+
+	// arguments
+	if(argc != 2){
+		fprintf(stderr, "Usage: server <config_file>\n");
+		exit(1);
+	}
+
+	read_config(argv[1]);
+
     if((s = socket(PF_INET, SOCK_DGRAM, 0)) == -1){
         perror("socket");
         exit(1);
@@ -119,4 +131,38 @@ int main(int argc, char* argv[])
     }
 
 	free(cli);
+}
+
+void read_config(char* file)
+{
+	char line[512];
+	char ip[56];
+	char mask[56];
+	struct in_addr ipaddr;
+	uint32_t netmask;
+	FILE *fp;
+
+	queue_init();
+
+	if((fp = fopen(file, "r")) == NULL){
+		fprintf(stderr, "cannot open config file\n");
+		exit(1);
+	}
+
+	bzero(line, 512);
+
+	while(fgets(line, 512 - 1, fp) != NULL){
+		bzero(ip, 56);
+		bzero(mask, 56);
+		sscanf(line, "%55s %55s", ip, mask);
+		printf("ip: %s\nmask:%s\n", ip, mask);
+		inet_aton(ip, &ipaddr);
+		netmask = (uint32_t)atoi(mask);
+		queue_push(ipaddr, netmask);
+		bzero(line, 512);
+	}
+
+	fclose(fp);
+
+	debug_print();
 }
