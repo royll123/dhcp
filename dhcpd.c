@@ -31,11 +31,12 @@ int main(int argc, char* argv[])
 {
     int s, msgtype, count;
     char buf[512];
+	struct dhcph head;
     in_port_t myport = DHCP_PORT;
     struct client *cli;
     struct sockaddr_in myskt;
     struct sockaddr_in skt;
-    socklen_t sktlen;
+    socklen_t sktlen = sizeof(skt);
     
     if((s = socket(PF_INET, SOCK_DGRAM, 0)) == -1){
         perror("socket");
@@ -50,32 +51,65 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
+	bzero(&head, sizeof(head));
+	if((cli = (struct client*)malloc(sizeof(struct client))) == NULL){
+		fprintf(stderr, "Cannot allocate memory.\n");
+		exit(1);
+	}
+	cli->stat = STAT_WAIT_DISCOVER;
     
     for(;;){
-        if((count = recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr*)&skt, &sktlen)) < 0){
+        if((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, &sktlen)) < 0){
             perror("recvfrom");
             exit(1);
         }
         
         switch(cli->stat) {
             case STAT_WAIT_DISCOVER:
-				fprintf(stderr, "RECEIVED: STAT_WAIT_DISCOVER\n");
-                if(msgtype == DHCPDISCOVER) {
+                if(head.type == DHCPDISCOVER) {
+					fprintf(stderr, "from STAT_WAIT_DISCOVER to STAT_WAIT_REQUEST\n");
                     // IPアドレスの選択、DHCPOFFERの返信
                     cli->stat = STAT_WAIT_REQUEST;
+					bzero(&head, sizeof(head));
+					head.type = DHCPOFFER;
+					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
+						perror("sendto");
+						exit(1);
+					}
                 } else {
                     
                 }
                 break;
             case STAT_WAIT_REQUEST:
-				fprintf(stderr, "RECEIVED: STAT_WAIT_REQUEST\n");
-                if(msgtype == DHCPREQUEST){
+                if(head.type == DHCPREQUEST){
+					fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
                     // DHCPACKの返信
-                    cli->stat = STAT_WAIT_DISCOVER;
+                    cli->stat = STAT_WAIT_RELEASE;
+					bzero(&head, sizeof(head));
+					head.type = DHCPACK;
+					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
+						perror("sendto");
+						exit(1);
+					}
                 } else {
                     
                 }
                 break;
+			case STAT_WAIT_RELEASE:
+				if(head.type == DHCPREQUEST){
+					fprintf(stderr, "keeping STAT_WAIT_RELEASE\n");
+					bzero(&head, sizeof(head));
+					head.type = DHCPACK;
+					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
+						perror("sendto");
+						exit(1);
+					}
+				} else if(head.type == DHCPRELEASE){
+					fprintf(stderr, "release client\n");
+					cli->stat = STAT_WAIT_DISCOVER;
+				} else {
+				}
+				break;			
         }
     }
     
@@ -83,4 +117,6 @@ int main(int argc, char* argv[])
         perror("close");
         exit(1);
     }
+
+	free(cli);
 }

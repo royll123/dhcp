@@ -7,7 +7,8 @@
 #define DHCPDISCOVER    1
 #define DHCPREQUEST     2
 #define DHCPOFFER       3
-#define DHCPPACK        4
+#define DHCPACK			4
+#define DHCPRELEASE		5
 
 #define DHCP_PORT		51230
 
