@@ -38,7 +38,7 @@ void set_alarm(int);
 void set_signal();
 void set_client_timeout(struct client* c, uint16_t ttl);
 void insert_tout_list(struct client*);
-struct client* get_client(struct in_addr*);
+struct client* get_client(struct in_addr*, int);
 struct client* create_client();
 void release_client(struct client*);
 void print_client(struct client*);
@@ -97,7 +97,19 @@ int main(int argc, char* argv[])
         }
 
 		// get client
-		cli = get_client(&skt.sin_addr);
+		cli = get_client(&skt.sin_addr, head.type);
+		
+		if(cli == NULL){
+			// type error
+			fprintf(stderr, "DHCP headder TYPE is wrong\n");
+			continue;
+		}
+
+		if(head.type == DHCPRELEASE){
+			fprintf(stderr, "release client from %s\n", inet_ntoa(skt.sin_addr));
+			release_client(cli);
+			continue;
+		}
         
         switch(cli->stat) {
             case STAT_WAIT_DISCOVER:
@@ -161,9 +173,6 @@ int main(int argc, char* argv[])
 						perror("sendto");
 						exit(1);
 					}
-				} else if(head.type == DHCPRELEASE){
-					fprintf(stderr, "release client\n");
-					cli->stat = STAT_WAIT_DISCOVER;
 				} else {
 					fprintf(stderr, "error\n");
 					cli->stat = STAT_WAIT_DISCOVER;
@@ -267,7 +276,7 @@ void insert_tout_list(struct client* cl)
 	c->tout_fp = cl;
 }
 
-struct client* get_client(struct in_addr* ip)
+struct client* get_client(struct in_addr* ip, int type)
 {
 	struct client* c = &client_list;
 
@@ -278,9 +287,13 @@ struct client* get_client(struct in_addr* ip)
 	}
 
 	if(c == &client_list){
-		struct client *n = create_client();
-		n->cli_id = *ip;
-		c = n;
+		if(type == DHCPDISCOVER){
+			struct client *n = create_client();
+			n->cli_id = *ip;
+			c = n;
+		} else {
+			c = NULL;
+		}
 	}
 
 	return c;
