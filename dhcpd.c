@@ -3,8 +3,10 @@
 #include <strings.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <signal.h>
 #include "dhcp_common.h"
 #include "queue.h"
 
@@ -12,6 +14,8 @@
 #define STAT_WAIT_REQUEST   2
 #define STAT_WAIT_RELEASE   3
 
+#define RECV_TIMEOUT		10
+#define TIME_TO_LIVE		40
 
 struct client {
     struct client *fp; /* 双方向リスト用ポインタ */
@@ -28,8 +32,15 @@ struct client {
 };
 struct client client_list; /* クライアントリストのリストヘッド */
 
+void timeout_handler(int);
+void update_alarm();
+void set_alarm(int);
+void set_signal();
+void set_client_timeout(struct client* c, uint16_t ttl);
+void insert_tout_list(struct client*);
 struct client* get_client(struct in_addr*);
 struct client* create_client();
+void release_client(struct client*);
 void print_client(struct client*);
 void read_config(char*);
 
@@ -53,6 +64,10 @@ int main(int argc, char* argv[])
 
 	read_config(argv[1]);
 
+	// signal
+	set_signal();
+
+	// socket
     if((s = socket(PF_INET, SOCK_DGRAM, 0)) == -1){
         perror("socket");
         exit(1);
@@ -66,11 +81,15 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
+	// initialize
 	bzero(&head, sizeof(head));
     
 	client_list.fp = &client_list;
 	client_list.bp = &client_list;
+	client_list.tout_fp = &client_list;
+	client_list.tout_bp = &client_list;
 
+	// main loop
     for(;;){
         if((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, &sktlen)) < 0){
             perror("recvfrom");
@@ -86,6 +105,7 @@ int main(int argc, char* argv[])
 					struct in_addr ip;
 					uint32_t mask;
 					fprintf(stderr, "from STAT_WAIT_DISCOVER to STAT_WAIT_REQUEST\n");
+					set_client_timeout(cli, RECV_TIMEOUT);
                     // IPアドレスの選択、DHCPOFFERの返信
 					queue_pop(&ip, &mask);
                     cli->stat = STAT_WAIT_REQUEST;
@@ -95,12 +115,14 @@ int main(int argc, char* argv[])
 					head.type = DHCPOFFER;
 					head.address = ip.s_addr;
 					head.netmask = mask;
+					head.ttl = TIME_TO_LIVE;
 					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 						perror("sendto");
 						exit(1);
 					}
                 } else {
-                    
+                    fprintf(stderr, "error\n");
+					cli->stat = STAT_WAIT_DISCOVER;
                 }
                 break;
             case STAT_WAIT_REQUEST:
@@ -108,6 +130,8 @@ int main(int argc, char* argv[])
 					fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
 					print_dhcp_header(&head);
 					print_client(cli);
+
+					set_client_timeout(cli, head.ttl);
                     // DHCPACKの返信
                     cli->stat = STAT_WAIT_RELEASE;
 					bzero(&head, sizeof(head));
@@ -117,7 +141,8 @@ int main(int argc, char* argv[])
 						exit(1);
 					}
                 } else {
-                    
+                    fprintf(stderr, "error\n");
+					cli->stat = STAT_WAIT_DISCOVER;
                 }
                 break;
 			case STAT_WAIT_RELEASE:
@@ -133,6 +158,8 @@ int main(int argc, char* argv[])
 					fprintf(stderr, "release client\n");
 					cli->stat = STAT_WAIT_DISCOVER;
 				} else {
+					fprintf(stderr, "error\n");
+					cli->stat = STAT_WAIT_DISCOVER;
 				}
 				break;			
         }
@@ -144,6 +171,93 @@ int main(int argc, char* argv[])
     }
 
 	free(cli);
+}
+
+void timeout_handler(int sig)
+{
+	struct client *c = client_list.tout_fp;
+
+	switch(c->stat){
+		case STAT_WAIT_DISCOVER:
+		case STAT_WAIT_REQUEST:
+			fprintf(stderr, "Timeout\n");
+			release_client(c);
+			break;
+		case STAT_WAIT_RELEASE:
+			fprintf(stderr, "Timeout\n");
+			release_client(c);
+			break;
+	}
+	update_alarm();
+}
+
+void update_alarm()
+{
+	struct client* c = client_list.tout_fp;
+	struct timeval tp;
+	int diff;
+	if(c == &client_list) return;
+
+	gettimeofday(&tp, NULL);
+	diff = (int)tp.tv_sec - c->exp_time;
+
+	if(diff <= 0){
+		timeout_handler(0);
+		return;
+	} else {
+		set_alarm(diff);
+	}	
+}
+
+void set_alarm(int time)
+{
+	alarm(time);
+}
+
+void set_signal()
+{
+	struct sigaction act;
+	act.sa_handler = &timeout_handler;
+	act.sa_flags = SA_RESTART;
+
+	if(sigaction(SIGALRM, &act, NULL) < 0){
+		perror("sigaction");
+		exit(1);
+	}
+}
+
+void set_client_timeout(struct client* c, uint16_t ttl)
+{
+	struct timeval tp;
+	gettimeofday(&tp, NULL);
+	c->start_time = (int)tp.tv_sec;
+	c->exp_time = (int)tp.tv_sec + ttl;
+
+	insert_tout_list(c);
+
+	if(client_list.tout_fp == c){
+		set_alarm(ttl);
+	}
+}
+
+void insert_tout_list(struct client* cl)
+{
+	struct client* c = &client_list;
+
+	while((c = c->tout_fp) != &client_list){
+		if(c->exp_time < cl->exp_time){
+			break;
+		}
+	}
+	
+	if(cl->tout_fp != NULL && cl->tout_bp != NULL){
+		cl->tout_fp->tout_bp = cl->tout_bp;
+		cl->tout_bp->tout_fp = cl->tout_fp;
+	}
+	cl->tout_bp = c;
+	cl->tout_fp = c->tout_fp;
+	c->tout_fp->tout_bp = cl;
+	c->tout_fp = cl;
 }
 
 struct client* get_client(struct in_addr* ip)
@@ -172,8 +286,23 @@ struct client* create_client()
 	client_list.bp->fp = n;
 	n->bp = client_list.bp;
 	n->fp = &client_list;
+	n->tout_fp = NULL;
+	n->tout_bp = NULL;
 	client_list.bp = n;
 	return n;
+}
+
+void release_client(struct client* c)
+{
+	fprintf(stderr, "release client using ip:%s\n", inet_ntoa(c->alloc_addr));
+	queue_push(c->alloc_addr, c->netmask);
+	c->bp->fp = c->fp;
+	c->fp->bp = c->bp;
+	if(c->tout_fp != NULL && c->tout_bp != NULL){
+		c->tout_bp->tout_fp = c->tout_fp;
+		c->tout_fp->tout_bp = c->tout_bp;
+	}
+	free(c);
 }
 
 void print_client(struct client *c)

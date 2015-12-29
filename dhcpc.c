@@ -3,6 +3,8 @@
 #include <strings.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include "dhcp_common.h"
@@ -16,13 +18,14 @@ int main(int argc, char* argv[])
 {
 	int s, count;
 	struct sockaddr_in skt;
-	socklen_t sktlen;
+	socklen_t sktlen = sizeof(skt);
 	in_port_t port = DHCP_PORT;
 	struct in_addr ipaddr;
 	int status;
 	struct dhcph head;
 	in_addr_t my_addr;
 	uint32_t my_netmask;
+	int my_ttl;
 
 	if(argc != 2){
 		fprintf(stderr, "Usage: mydhcpc <server_ip_address>\n");
@@ -56,6 +59,25 @@ int main(int argc, char* argv[])
 				break;
 			case STAT_WAIT_OFFER:
 				fprintf(stderr, "STAT_WAIT_OFFER\n");
+				{
+					int result;
+					fd_set rdfds;
+					struct timeval t;
+					t.tv_sec = 10;
+					t.tv_usec = 0;
+					FD_ZERO(&rdfds);
+					FD_SET(s, &rdfds);
+					if((result = select(s+1, &rdfds, NULL, NULL, &t)) < 0){
+						perror("select");
+						exit(1);
+					}
+					if(result == 0){
+						fprintf(stderr, "timeout\n");
+						status = STAT_INITIAL;
+						break;
+					}
+					if(FD_ISSET(s, &rdfds)){
+					
 				if ((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr *)&skt, &sktlen)) < 0) {
 					perror("recvfrom");
 					exit(1);
@@ -64,15 +86,19 @@ int main(int argc, char* argv[])
 					print_dhcp_header(&head);
 					my_addr = head.address;
 					my_netmask = head.netmask;
+					my_ttl = head.ttl;
 					bzero(&head, sizeof(struct dhcph));
 					head.type = DHCPREQUEST;
 					head.address = my_addr;
 					head.netmask = my_netmask;
+					head.ttl = my_ttl;
 					if ((count = sendto(s, &head, sizeof(head), 0, (struct sockaddr *)&skt, sizeof skt)) < 0) {
 						perror("sendto");
 						exit(1);
 					}
 					status = STAT_WAIT_REPLY;
+				}
+				}
 				}
 				break;
 			case STAT_WAIT_REPLY:
@@ -83,6 +109,10 @@ int main(int argc, char* argv[])
 				}
 				if(head.type == DHCPACK){
 					status = STAT_WAIT_TIME;
+					my_ttl = head.ttl;
+					my_addr = head.address;
+					my_netmask = head.netmask;
+
 				} else {
 				}
 				break;
