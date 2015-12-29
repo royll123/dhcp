@@ -18,7 +18,6 @@ int queue_push(struct in_addr ip, uint32_t netmask)
 	if(q.last == NULL){
 		p = &q.last;
 	} else {
-		fprintf(stderr, "use last\n");
 		p = &q.last->next;
 	}
 	*p = (struct address*)malloc(sizeof(struct address));

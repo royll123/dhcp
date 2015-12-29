@@ -21,6 +21,8 @@ int main(int argc, char* argv[])
 	struct in_addr ipaddr;
 	int status;
 	struct dhcph head;
+	in_addr_t my_addr;
+	uint32_t my_netmask;
 
 	if(argc != 2){
 		fprintf(stderr, "Usage: mydhcpc <server_ip_address>\n");
@@ -59,8 +61,13 @@ int main(int argc, char* argv[])
 					exit(1);
 				}
 				if(head.type == DHCPOFFER){
+					print_dhcp_header(&head);
+					my_addr = head.address;
+					my_netmask = head.netmask;
 					bzero(&head, sizeof(struct dhcph));
 					head.type = DHCPREQUEST;
+					head.address = my_addr;
+					head.netmask = my_netmask;
 					if ((count = sendto(s, &head, sizeof(head), 0, (struct sockaddr *)&skt, sizeof skt)) < 0) {
 						perror("sendto");
 						exit(1);
@@ -80,7 +87,7 @@ int main(int argc, char* argv[])
 				}
 				break;
 			case STAT_WAIT_TIME:
-				fprintf(stderr, "STAT_WAIT_TIME\n");
+				// fprintf(stderr, "STAT_WAIT_TIME\n");
 				break;
 		}
 	}

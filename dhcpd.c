@@ -79,11 +79,18 @@ int main(int argc, char* argv[])
         switch(cli->stat) {
             case STAT_WAIT_DISCOVER:
                 if(head.type == DHCPDISCOVER) {
+					struct in_addr ip;
+					uint32_t mask;
 					fprintf(stderr, "from STAT_WAIT_DISCOVER to STAT_WAIT_REQUEST\n");
                     // IPアドレスの選択、DHCPOFFERの返信
+					queue_pop(&ip, &mask);
                     cli->stat = STAT_WAIT_REQUEST;
+					cli->alloc_addr = ip;
+					cli->netmask = mask;
 					bzero(&head, sizeof(head));
 					head.type = DHCPOFFER;
+					head.address = ip.s_addr;
+					head.netmask = mask;
 					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 						perror("sendto");
 						exit(1);
@@ -95,6 +102,7 @@ int main(int argc, char* argv[])
             case STAT_WAIT_REQUEST:
                 if(head.type == DHCPREQUEST){
 					fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
+					print_dhcp_header(&head);
                     // DHCPACKの返信
                     cli->stat = STAT_WAIT_RELEASE;
 					bzero(&head, sizeof(head));
@@ -155,7 +163,6 @@ void read_config(char* file)
 		bzero(ip, 56);
 		bzero(mask, 56);
 		sscanf(line, "%55s %55s", ip, mask);
-		printf("ip: %s\nmask:%s\n", ip, mask);
 		inet_aton(ip, &ipaddr);
 		netmask = (uint32_t)atoi(mask);
 		queue_push(ipaddr, netmask);

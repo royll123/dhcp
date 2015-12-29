@@ -20,4 +20,6 @@ struct dhcph {
     uint32_t netmask;
 };
 
+void print_dhcp_header(struct dhcph*);
+
 #endif
