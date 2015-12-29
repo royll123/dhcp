@@ -28,6 +28,9 @@ struct client {
 };
 struct client client_list; /* クライアントリストのリストヘッド */
 
+struct client* get_client(struct in_addr*);
+struct client* create_client();
+void print_client(struct client*);
 void read_config(char*);
 
 int main(int argc, char* argv[])
@@ -64,17 +67,18 @@ int main(int argc, char* argv[])
     }
     
 	bzero(&head, sizeof(head));
-	if((cli = (struct client*)malloc(sizeof(struct client))) == NULL){
-		fprintf(stderr, "Cannot allocate memory.\n");
-		exit(1);
-	}
-	cli->stat = STAT_WAIT_DISCOVER;
     
+	client_list.fp = &client_list;
+	client_list.bp = &client_list;
+
     for(;;){
         if((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, &sktlen)) < 0){
             perror("recvfrom");
             exit(1);
         }
+
+		// get client
+		cli = get_client(&skt.sin_addr);
         
         switch(cli->stat) {
             case STAT_WAIT_DISCOVER:
@@ -103,6 +107,7 @@ int main(int argc, char* argv[])
                 if(head.type == DHCPREQUEST){
 					fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
 					print_dhcp_header(&head);
+					print_client(cli);
                     // DHCPACKの返信
                     cli->stat = STAT_WAIT_RELEASE;
 					bzero(&head, sizeof(head));
@@ -139,6 +144,43 @@ int main(int argc, char* argv[])
     }
 
 	free(cli);
+}
+
+struct client* get_client(struct in_addr* ip)
+{
+	struct client* c = &client_list;
+
+	while((c = c->fp) != &client_list){
+		if(c->cli_id.s_addr == ip->s_addr){
+			break;
+		}
+	}
+
+	if(c == &client_list){
+		struct client *n = create_client();
+		n->cli_id = *ip;
+		c = n;
+	}
+
+	return c;
+}
+
+struct client* create_client()
+{
+	struct client *n = (struct client*)malloc(sizeof(struct client));
+	n->stat = STAT_WAIT_DISCOVER;
+	client_list.bp->fp = n;
+	n->bp = client_list.bp;
+	n->fp = &client_list;
+	client_list.bp = n;
+	return n;
+}
+
+void print_client(struct client *c)
+{
+	fprintf(stderr, "Client IP Address: %s\n", inet_ntoa(c->cli_id));
+	fprintf(stderr, "Given IP Address: %s\n", inet_ntoa(c->alloc_addr));
+	fprintf(stderr, "Given Netmask: %d\n", c->netmask);
 }
 
 void read_config(char* file)
