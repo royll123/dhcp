@@ -136,6 +136,9 @@ int main(int argc, char* argv[])
                     cli->stat = STAT_WAIT_RELEASE;
 					bzero(&head, sizeof(head));
 					head.type = DHCPACK;
+					head.ttl = cli->exp_time - cli->start_time;
+					head.address = cli->alloc_addr.s_addr;
+					head.netmask = cli->netmask;
 					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 						perror("sendto");
 						exit(1);
@@ -148,8 +151,12 @@ int main(int argc, char* argv[])
 			case STAT_WAIT_RELEASE:
 				if(head.type == DHCPREQUEST){
 					fprintf(stderr, "keeping STAT_WAIT_RELEASE\n");
+					set_client_timeout(cli, head.ttl);
 					bzero(&head, sizeof(head));
 					head.type = DHCPACK;
+					head.ttl = cli->exp_time - cli->start_time;
+					head.address = cli->alloc_addr.s_addr;
+					head.netmask = cli->netmask;
 					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 						perror("sendto");
 						exit(1);

@@ -6,6 +6,7 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <signal.h>
 #include <arpa/inet.h>
 #include "dhcp_common.h"
 
@@ -13,6 +14,11 @@
 #define STAT_WAIT_OFFER 1
 #define STAT_WAIT_REPLY 2
 #define STAT_WAIT_TIME	3
+
+void set_signal();
+void timeout_handler(int);
+
+int alrm_flag = 0;
 
 int main(int argc, char* argv[])
 {
@@ -25,12 +31,14 @@ int main(int argc, char* argv[])
 	struct dhcph head;
 	in_addr_t my_addr;
 	uint32_t my_netmask;
-	int my_ttl;
+	uint16_t my_ttl;
 
 	if(argc != 2){
 		fprintf(stderr, "Usage: mydhcpc <server_ip_address>\n");
 		exit(1);
 	}
+
+	set_signal();
 
 	inet_aton(argv[1], &ipaddr);
 
@@ -112,12 +120,30 @@ int main(int argc, char* argv[])
 					my_ttl = head.ttl;
 					my_addr = head.address;
 					my_netmask = head.netmask;
-
+					alarm(my_ttl/2);
 				} else {
 				}
 				break;
 			case STAT_WAIT_TIME:
-				// fprintf(stderr, "STAT_WAIT_TIME\n");
+				 fprintf(stderr, "STAT_WAIT_TIME\n");
+
+				 pause();
+
+				 if(alrm_flag == 1){
+				 	// request again
+					alrm_flag = 0;
+					bzero(&head, sizeof(struct dhcph));
+					head.type = DHCPREQUEST;
+					head.address = my_addr;
+					head.netmask = my_netmask;
+					head.ttl = my_ttl;
+
+					if((count = sendto(s, &head, sizeof(head), 0, (struct sockaddr *)&skt, sizeof(skt))) < 0){
+						perror("sendto");
+						exit(1);
+					}
+					status = STAT_WAIT_REPLY;
+				 }
 				break;
 		}
 	}
@@ -127,3 +153,22 @@ int main(int argc, char* argv[])
 		exit(1);
 	}
 }
+
+void set_signal()
+{
+    struct sigaction act;
+    act.sa_handler = &timeout_handler;
+    act.sa_flags = 0;
+
+    if(sigaction(SIGALRM, &act, NULL) < 0){
+        perror("sigaction");
+        exit(1);
+    }
+}
+
+void timeout_handler(int sig)
+{
+	fprintf(stderr, "alarm\n");
+	alrm_flag = 1;
+}
+
