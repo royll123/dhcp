@@ -45,7 +45,10 @@ int main(int argc, char* argv[])
 
 	set_signal();
 
-//	inet_aton(argv[1], &ipaddr);
+	if(inet_pton(AF_INET, argv[1], &ipaddr) != 1){
+		fprintf(stderr, "wrong server_ip_address\n");
+		exit(1);
+	}
 
 	if((s = socket(PF_INET, SOCK_DGRAM, 0)) == -1){
         perror("socket");
@@ -54,8 +57,7 @@ int main(int argc, char* argv[])
 
 	skt.sin_family = AF_INET;
 	skt.sin_port = htons(port);
-//	skt.sin_addr.s_addr = htonl(ipaddr.s_addr);
-	skt.sin_addr.s_addr = inet_addr(argv[1]);
+	skt.sin_addr = ipaddr;
 	status = STAT_INITIAL;
 
 	for(;;){
