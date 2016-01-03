@@ -18,6 +18,7 @@
 void set_signal();
 void timeout_handler(int);
 void kill_process(int);
+void print_allocated_address(in_addr_t ip, uint32_t netmask, uint16_t ttl);
 
 int alrm_flag = 0;
 int kill_flag = 0;
@@ -59,6 +60,7 @@ int main(int argc, char* argv[])
 	skt.sin_port = htons(port);
 	skt.sin_addr = ipaddr;
 	status = STAT_INITIAL;
+	fprintf(stderr, "STAT_INITIAL\n");
 
 	for(;;){
 		if(kill_flag == 1){
@@ -68,12 +70,13 @@ int main(int argc, char* argv[])
 				perror("sendto");
 				exit(1);
 			}
+			fprintf(stderr, "Send\n");
+			print_dhcp_header(&head);
 			break;
 		}
 
 		switch(status){
 			case STAT_INITIAL:
-				fprintf(stderr, "STAT_INITIAL\n");
 				bzero(&head, sizeof(struct dhcph));
 				head.type = DHCPDISCOVER;
 
@@ -81,10 +84,12 @@ int main(int argc, char* argv[])
         			perror("sendto");
    			    	exit(1);
    				}
+				fprintf(stderr, "Send\n");
+				print_dhcp_header(&head);
 				status = STAT_WAIT_OFFER;
+				fprintf(stderr, "from STAT_INITIAL to STAT_WAIT_OFFER\n");
 				break;
 			case STAT_WAIT_OFFER:
-				fprintf(stderr, "STAT_WAIT_OFFER\n");
 				t.tv_sec = 10;
 				t.tv_usec = 0;
 				FD_ZERO(&rdfds);
@@ -96,6 +101,7 @@ int main(int argc, char* argv[])
 				if(result == 0){
 					fprintf(stderr, "timeout\n");
 					status = STAT_INITIAL;
+					fprintf(stderr, "from STAT_WAIT_OFFER to STAT_INITIAL\n");
 					break;
 				}
 				if(FD_ISSET(s, &rdfds)){
@@ -103,9 +109,12 @@ int main(int argc, char* argv[])
 						perror("recvfrom");
 						exit(1);
 					}
+
+					fprintf(stderr, "Receive\n");
+					print_dhcp_header(&head);
+
 					if(head.type == DHCPOFFER){
 						if(head.code == DHCP_CODE_OK){
-							print_dhcp_header(&head);
 							my_addr = head.address;
 							my_netmask = head.netmask;
 							my_ttl = head.ttl;
@@ -119,21 +128,23 @@ int main(int argc, char* argv[])
 								perror("sendto");
 								exit(1);
 							}
+							fprintf(stderr, "Send\n");
+							print_dhcp_header(&head);
 							status = STAT_WAIT_REPLY;
+							fprintf(stderr, "from STAT_WAIT_OFFER to STAT_WAIT_REPLY\n");
 						} else if(head.code == DHCP_CODE_ERR_NONE){
-							fprintf(stderr, "ERROR:%d\nThere is no ip resource.\nExit.\n", head.code);
+							fprintf(stderr, "ERROR:%d There is no ip resource. Exit.\n", head.code);
 							exit(1);
 						} else {
-							fprintf(stderr, "Received invalid DHCP code.\nExit.\n");
+							fprintf(stderr, "Received invalid DHCP code. Exit.\n");
 							exit(1);
 						}
 					} else {
-						fprintf(stderr, "Recieved invalid data.\nIgnore.\n");
+						fprintf(stderr, "Recieved invalid data. Ignore.\n");
 					}
 				}
 				break;
 			case STAT_WAIT_REPLY:
-				fprintf(stderr, "STAT_WAIT_REPLY\n");
 				t.tv_sec = 10;
                 t.tv_usec = 0;
                 FD_ZERO(&rdfds);
@@ -145,6 +156,7 @@ int main(int argc, char* argv[])
                 if(result == 0){
                     fprintf(stderr, "timeout\n");
                     status = STAT_INITIAL;
+					fprintf(stderr, "from STAT_WAIT_REPLY to STAT_INITIAL\n");
                     break;
                 }
                 if(FD_ISSET(s, &rdfds)){
@@ -152,27 +164,32 @@ int main(int argc, char* argv[])
 						perror("recvfrom");
 						exit(1);
 					}
+
+					fprintf(stderr, "Receive\n");
+					print_dhcp_header(&head);
+
 					if(head.type == DHCPACK){
 						if(head.code == DHCP_CODE_OK){
 							status = STAT_WAIT_TIME;
+							fprintf(stderr, "from STAT_WAIT_REPLY to STAT_WAIT_TIME\n");
 							my_ttl = head.ttl;
 							my_addr = head.address;
 							my_netmask = head.netmask;
 							alarm(my_ttl/2);
+							print_allocated_address(my_addr, my_netmask, my_ttl);
 						} else if(head.code == DHCP_CODE_ERR_OVL){
-							fprintf(stderr, "ERROR:%d\n Already Allocated IP Address.\n", head.code);
+							fprintf(stderr, "ERROR:%d Already Allocated IP Address.\n", head.code);
 							status = STAT_INITIAL;
+							fprintf(stderr, "from STAT_WAIT_REPLY to STAT_INITIAL\n");
 						} else {
-							fprintf(stderr, "Received invalid DHCP data.\nignore.\n");
+							fprintf(stderr, "Received invalid DHCP data. Ignore.\n");
 						}
 					} else {
-						fprintf(stderr, "Received invalid data.\nignore.\n");
+						fprintf(stderr, "Received invalid data. Ignore.\n");
 					}
 				}
 				break;
 			case STAT_WAIT_TIME:
-				 fprintf(stderr, "STAT_WAIT_TIME\n");
-
 				 pause();
 
 				 if(alrm_flag == 1){
@@ -189,7 +206,10 @@ int main(int argc, char* argv[])
 						perror("sendto");
 						exit(1);
 					}
+					fprintf(stderr, "Send\n");
+					print_dhcp_header(&head);
 					status = STAT_WAIT_REPLY;
+					fprintf(stderr, "from STAT_WAIT_TIME to STAT_WAIT_REPLY\n");
 				 }
 				break;
 		}
@@ -222,12 +242,20 @@ void set_signal()
 
 void timeout_handler(int sig)
 {
-	fprintf(stderr, "alarm\n");
 	alrm_flag = 1;
 }
 
 void kill_process(int sig)
 {
-	fprintf(stderr, "exit process\n");
 	kill_flag = 1;
+}
+
+void print_allocated_address(in_addr_t ip, uint32_t netmask, uint16_t ttl)
+{
+	struct in_addr i = {ip};
+	fprintf(stderr, "---  Allocated IP Address  ---\n");
+	fprintf(stderr, "IP: %s\n", inet_ntoa(i));
+	fprintf(stderr, "Netmask: %d\n", netmask);
+	fprintf(stderr, "Time to Live: %d\n", ttl);
+	fprintf(stderr, "---           end          ---\n");
 }

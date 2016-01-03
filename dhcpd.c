@@ -1,6 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <strings.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -45,6 +45,7 @@ struct client* get_client(struct in_addr*, int);
 struct client* create_client();
 void release_client(struct client*);
 void print_client(struct client*);
+void print_status_change(int pre, int post, struct in_addr* id);
 void read_config(char*);
 
 int main(int argc, char* argv[])
@@ -100,6 +101,7 @@ int main(int argc, char* argv[])
         }
 
 		// output received data.
+		fprintf(stderr, "Receive\n");
 		print_dhcp_header(&head);
 
 		// get client
@@ -107,12 +109,12 @@ int main(int argc, char* argv[])
 		
 		if(cli == NULL){
 			// type error
-			fprintf(stderr, "DHCP header TYPE is wrong.\n");
+			fprintf(stderr, "%s: Type field should be DHCPDISCOVER when initial connection to this server.\n", inet_ntoa(skt.sin_addr));
 			continue;
 		}
 
 		if(head.type == DHCPRELEASE){
-			fprintf(stderr, "release client from %s\n", inet_ntoa(skt.sin_addr));
+			fprintf(stderr, "%s: release client\n", inet_ntoa(cli->cli_id));
 			release_client(cli);
 			continue;
 		}
@@ -123,10 +125,6 @@ int main(int argc, char* argv[])
 					struct in_addr ip;
 					uint32_t mask;
 
-					cli->stat = STAT_WAIT_REQUEST;
-					fprintf(stderr, "from STAT_WAIT_DISCOVER to STAT_WAIT_REQUEST\n");
-					
-					bzero(&head, sizeof(head));
 					head.type = DHCPOFFER;
 					if(queue_pop(&ip, &mask) == -1){
 						// no resources of ip address
@@ -144,8 +142,13 @@ int main(int argc, char* argv[])
 						exit(1);
 					}
 					set_client_timeout(cli, RECV_TIMEOUT);
+					fprintf(stderr, "Send\n");
+					print_dhcp_header(&head);
+
+					cli->stat = STAT_WAIT_REQUEST;
+					print_status_change(STAT_WAIT_DISCOVER, STAT_WAIT_REQUEST, &cli->cli_id);
                 } else {
-                    fprintf(stderr, "received data type is not DHCPDISCOVER\nignore.\n");
+                    fprintf(stderr, "Type of received data is not DHCPDISCOVER. Ignore.\n");
                 }
                 break;
             case STAT_WAIT_REQUEST:
@@ -172,28 +175,32 @@ int main(int argc, char* argv[])
 								if(check_address_used(ip, mask, cli) < 0){
 									// already allocated address
 									head.code = DHCP_CODE_ERR_OVL;
+									cli->stat = STAT_WAIT_DISCOVER;
 								} else {
 									cli->stat = STAT_WAIT_RELEASE;
-                	                fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
 									head.code = DHCP_CODE_OK;
 									head.ttl = ttl;
 									head.address = cli->alloc_addr.s_addr;
 									head.netmask = cli->netmask;
-									set_client_timeout(cli, head.ttl);
 								}
 
 								if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 									perror("sendto");
 									exit(1);
 								}
+								fprintf(stderr, "Send\n");
+								print_dhcp_header(&head);
+
+								set_client_timeout(cli,head.ttl);
+								print_status_change(STAT_WAIT_REQUEST, cli->stat, &cli->cli_id);
 							}
 							break;
 						default:
-							fprintf(stderr, "received invalid code.\nignore.\n");
+							fprintf(stderr, "Received invalid code. Ignore.\n");
 							break;
 					}
                 } else {
-                    fprintf(stderr, "received invalid data\nignore.\n");
+                    fprintf(stderr, "Received unexpected type of data. Ignore.\n");
                 }
                 break;
 			case STAT_WAIT_RELEASE:
@@ -205,7 +212,6 @@ int main(int argc, char* argv[])
 								uint32_t mask = head.netmask;
 								uint16_t ttl = head.ttl;
 
-								fprintf(stderr, "keeping STAT_WAIT_RELEASE\n");
 								bzero(&head, sizeof(head));
 								head.type = DHCPACK;
 
@@ -215,28 +221,41 @@ int main(int argc, char* argv[])
 								}
 								if(check_address_used(ip, mask, cli) < 0){
 									head.code = DHCP_CODE_ERR_OVL;
+									cli->stat = STAT_WAIT_DISCOVER;
 								} else {
 									head.ttl = ttl;
 									head.address = cli->alloc_addr.s_addr;
 									head.netmask = cli->netmask;
-									set_client_timeout(cli, head.ttl);
 								}
 
 								if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 									perror("sendto");
 									exit(1);
 								}
+								fprintf(stderr, "Send\n");
+								print_dhcp_header(&head);
+
+								if(cli->stat != STAT_WAIT_RELEASE){
+									print_status_change(STAT_WAIT_RELEASE, cli->stat, &cli->cli_id);
+								} else {
+									set_client_timeout(cli, head.ttl);
+								}
 							}
 							break;
 						default:
-							fprintf(stderr, "received invalid code.\nignore.\n");
+							fprintf(stderr, "Received invalid code. Ignore.\n");
 							break;
 					}
 				} else {
-					fprintf(stderr, "received invalid data\nignore.\n");
+					fprintf(stderr, "Received unexpected type of data. Ignore.\n");
 				}
-				break;			
-        }
+				break;
+
+			default:
+				fprintf(stderr, "Reached undefined status. Release this client.\n");
+        		release_client(cli);
+				break;
+		}
     }
     
     if(close(s) < 0){
@@ -284,11 +303,11 @@ void timeout_handler(int sig)
 
 	switch(c->stat){
 		case STAT_WAIT_REQUEST:
-			fprintf(stderr, "Timeout\nclient state back to STAT_INITIAL.\n");
+			fprintf(stderr, "%s: Timeout. Client state back to STAT_INITIAL.\n", inet_ntoa(c->cli_id));
 			release_client(c);
 			break;
 		case STAT_WAIT_RELEASE:
-			fprintf(stderr, "Expired using IP Address.\nExit this client.\n");
+			fprintf(stderr, "%s: Allocated IP Address expired. Exit this client.\n", inet_ntoa(c->cli_id));
 			release_client(c);
 			break;
 	}
@@ -302,7 +321,10 @@ void update_alarm()
 	struct client* c = client_list.tout_fp;
 	struct timeval tp;
 	int diff;
-	if(c == &client_list) return;
+	if(c == &client_list){
+		set_alarm(0);
+		return;
+	}
 
 	gettimeofday(&tp, NULL);
 	diff = c->exp_time - (int)tp.tv_sec;
@@ -317,7 +339,7 @@ void update_alarm()
 
 void set_alarm(int time)
 {
-	fprintf(stderr, "set alarm in %d seconds.\n", time);
+//	fprintf(stderr, "set alarm in %d seconds.\n", time);
 	alarm(time);
 }
 
@@ -425,8 +447,10 @@ struct client* create_client()
 
 void release_client(struct client* c)
 {
-	fprintf(stderr, "release client ip:%s\n", inet_ntoa(c->cli_id));
-	queue_push(c->alloc_addr, c->netmask);
+	fprintf(stderr, "%s: release client\n", inet_ntoa(c->cli_id));
+	if(queue_push(c->alloc_addr, c->netmask) == 0){
+		fprintf(stderr, "free ip:%s netmask:%d\n", inet_ntoa(c->alloc_addr), c->netmask);
+	}
 	c->bp->fp = c->fp;
 	c->fp->bp = c->bp;
 	delete_tout_list(c);
@@ -439,7 +463,34 @@ void print_client(struct client *c)
 	fprintf(stderr, "Client IP Address: %s\n", inet_ntoa(c->cli_id));
 	fprintf(stderr, "Given IP Address: %s\n", inet_ntoa(c->alloc_addr));
 	fprintf(stderr, "Given Netmask: %d\n", c->netmask);
+	fprintf(stderr, "Given TTL: %d\n", c->exp_time - c->start_time);
 	fprintf(stderr, "*********print client info end  *********\n");
+}
+
+void get_status_string(int stat, char* str, int size)
+{
+	switch(stat){
+		case STAT_WAIT_DISCOVER:
+			strncpy(str, "STAT_WAIT_DISCOVER", size);
+			break;
+		case STAT_WAIT_REQUEST:
+			strncpy(str, "STAT_WAIT_REQUEST", size);
+			break;
+		case STAT_WAIT_RELEASE:
+			strncpy(str, "STAT_WAIT_RELEASE", size);
+			break;
+		default:
+			strncpy(str, "UNDEFINED STATE", size);
+			break;
+	}
+}
+
+void print_status_change(int pre, int post, struct in_addr* id)
+{
+	char str_pre[24] = {0}, str_post[24] = {0};
+	get_status_string(pre, str_pre, sizeof(str_pre)-1);
+	get_status_string(post, str_post, sizeof(str_post)-1);
+	fprintf(stderr, "%s: from %s to %s\n", inet_ntoa(*id), str_pre, str_post);
 }
 
 void read_config(char* file)
