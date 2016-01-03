@@ -200,16 +200,32 @@ int main(int argc, char* argv[])
 				if(head.type == DHCPREQUEST){
 					switch(head.code){
 						case DHCP_CODE_REQ_EXT:
-							fprintf(stderr, "keeping STAT_WAIT_RELEASE\n");
-							set_client_timeout(cli, head.ttl);
-							bzero(&head, sizeof(head));
-							head.type = DHCPACK;
-							head.ttl = cli->exp_time - cli->start_time;
-							head.address = cli->alloc_addr.s_addr;
-							head.netmask = cli->netmask;
-							if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
-								perror("sendto");
-								exit(1);
+							{
+								struct in_addr ip = { head.address };
+								uint32_t mask = head.netmask;
+								uint16_t ttl = head.ttl;
+
+								fprintf(stderr, "keeping STAT_WAIT_RELEASE\n");
+								bzero(&head, sizeof(head));
+								head.type = DHCPACK;
+
+								// check header
+								if(check_requested_data(ip, mask, ttl) < 0){
+									break;
+								}
+								if(check_address_used(ip, mask, cli) < 0){
+									head.code = DHCP_CODE_ERR_OVL;
+								} else {
+									head.ttl = ttl;
+									head.address = cli->alloc_addr.s_addr;
+									head.netmask = cli->netmask;
+									set_client_timeout(cli, head.ttl);
+								}
+
+								if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
+									perror("sendto");
+									exit(1);
+								}
 							}
 							break;
 						default:
