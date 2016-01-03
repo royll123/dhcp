@@ -10,6 +10,12 @@
 #define DHCPACK			4
 #define DHCPRELEASE		5
 
+#define DHCP_CODE_OK		0
+#define DHCP_CODE_REQ_ALC	10
+#define DHCP_CODE_REQ_EXT	11
+#define DHCP_CODE_ERR_NONE	129
+#define DHCP_CODE_ERR_OVL	130
+
 #define DHCP_PORT		51230
 
 struct dhcph {

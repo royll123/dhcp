@@ -34,6 +34,9 @@ int main(int argc, char* argv[])
 	in_addr_t my_addr;
 	uint32_t my_netmask;
 	uint16_t my_ttl;
+	int result;
+	fd_set rdfds;
+	struct timeval t;
 
 	if(argc != 2){
 		fprintf(stderr, "Usage: mydhcpc <server_ip_address>\n");
@@ -42,7 +45,7 @@ int main(int argc, char* argv[])
 
 	set_signal();
 
-	inet_aton(argv[1], &ipaddr);
+//	inet_aton(argv[1], &ipaddr);
 
 	if((s = socket(PF_INET, SOCK_DGRAM, 0)) == -1){
         perror("socket");
@@ -51,7 +54,8 @@ int main(int argc, char* argv[])
 
 	skt.sin_family = AF_INET;
 	skt.sin_port = htons(port);
-	skt.sin_addr.s_addr = htonl(ipaddr.s_addr);
+//	skt.sin_addr.s_addr = htonl(ipaddr.s_addr);
+	skt.sin_addr.s_addr = inet_addr(argv[1]);
 	status = STAT_INITIAL;
 
 	for(;;){
@@ -79,35 +83,33 @@ int main(int argc, char* argv[])
 				break;
 			case STAT_WAIT_OFFER:
 				fprintf(stderr, "STAT_WAIT_OFFER\n");
-				{
-					int result;
-					fd_set rdfds;
-					struct timeval t;
-					t.tv_sec = 10;
-					t.tv_usec = 0;
-					FD_ZERO(&rdfds);
-					FD_SET(s, &rdfds);
-					if((result = select(s+1, &rdfds, NULL, NULL, &t)) < 0){
-						perror("select");
+				t.tv_sec = 10;
+				t.tv_usec = 0;
+				FD_ZERO(&rdfds);
+				FD_SET(s, &rdfds);
+				if((result = select(s+1, &rdfds, NULL, NULL, &t)) < 0){
+					perror("select");
+					exit(1);
+				}
+				if(result == 0){
+					fprintf(stderr, "timeout\n");
+					status = STAT_INITIAL;
+					break;
+				}
+				if(FD_ISSET(s, &rdfds)){
+					if ((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr *)&skt, &sktlen)) < 0) {
+						perror("recvfrom");
 						exit(1);
 					}
-					if(result == 0){
-						fprintf(stderr, "timeout\n");
-						status = STAT_INITIAL;
-						break;
-					}
-					if(FD_ISSET(s, &rdfds)){
-						if ((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr *)&skt, &sktlen)) < 0) {
-							perror("recvfrom");
-							exit(1);
-						}
-						if(head.type == DHCPOFFER){
+					if(head.type == DHCPOFFER){
+						if(head.code == DHCP_CODE_OK){
 							print_dhcp_header(&head);
 							my_addr = head.address;
 							my_netmask = head.netmask;
 							my_ttl = head.ttl;
 							bzero(&head, sizeof(struct dhcph));
 							head.type = DHCPREQUEST;
+							head.code = DHCP_CODE_REQ_ALC;
 							head.address = my_addr;
 							head.netmask = my_netmask;
 							head.ttl = my_ttl;
@@ -116,23 +118,54 @@ int main(int argc, char* argv[])
 								exit(1);
 							}
 							status = STAT_WAIT_REPLY;
+						} else if(head.code == DHCP_CODE_ERR_NONE){
+							fprintf(stderr, "ERROR:%d\nThere is no ip resource.\nExit.\n", head.code);
+							exit(1);
+						} else {
+							fprintf(stderr, "Received invalid DHCP code.\nExit.\n");
+							exit(1);
 						}
+					} else {
+						fprintf(stderr, "Recieved invalid data.\nIgnore.\n");
 					}
 				}
 				break;
 			case STAT_WAIT_REPLY:
 				fprintf(stderr, "STAT_WAIT_REPLY\n");
-				if ((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr *)&skt, &sktlen)) < 0) {
-					perror("recvfrom");
-					exit(1);
-				}
-				if(head.type == DHCPACK){
-					status = STAT_WAIT_TIME;
-					my_ttl = head.ttl;
-					my_addr = head.address;
-					my_netmask = head.netmask;
-					alarm(my_ttl/2);
-				} else {
+				t.tv_sec = 10;
+                t.tv_usec = 0;
+                FD_ZERO(&rdfds);
+                FD_SET(s, &rdfds);
+                if((result = select(s+1, &rdfds, NULL, NULL, &t)) < 0){
+                    perror("select");
+                    exit(1);
+                }
+                if(result == 0){
+                    fprintf(stderr, "timeout\n");
+                    status = STAT_INITIAL;
+                    break;
+                }
+                if(FD_ISSET(s, &rdfds)){
+					if ((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr *)&skt, &sktlen)) < 0) {
+						perror("recvfrom");
+						exit(1);
+					}
+					if(head.type == DHCPACK){
+						if(head.code == DHCP_CODE_OK){
+							status = STAT_WAIT_TIME;
+							my_ttl = head.ttl;
+							my_addr = head.address;
+							my_netmask = head.netmask;
+							alarm(my_ttl/2);
+						} else if(head.code == DHCP_CODE_ERR_OVL){
+							fprintf(stderr, "ERROR:%d\n Already Allocated IP Address.\n", head.code);
+							status = STAT_INITIAL;
+						} else {
+							fprintf(stderr, "Received invalid DHCP data.\nignore.\n");
+						}
+					} else {
+						fprintf(stderr, "Received invalid data.\nignore.\n");
+					}
 				}
 				break;
 			case STAT_WAIT_TIME:
@@ -145,6 +178,7 @@ int main(int argc, char* argv[])
 					alrm_flag = 0;
 					bzero(&head, sizeof(struct dhcph));
 					head.type = DHCPREQUEST;
+					head.code = DHCP_CODE_REQ_EXT;
 					head.address = my_addr;
 					head.netmask = my_netmask;
 					head.ttl = my_ttl;

@@ -37,6 +37,7 @@ void update_alarm();
 void set_alarm(int);
 void set_signal();
 void set_client_timeout(struct client* c, uint16_t ttl);
+void delete_tout_list(struct client*);
 void insert_tout_list(struct client*);
 struct client* get_client(struct in_addr*, int);
 struct client* create_client();
@@ -101,7 +102,7 @@ int main(int argc, char* argv[])
 		
 		if(cli == NULL){
 			// type error
-			fprintf(stderr, "DHCP headder TYPE is wrong\n");
+			fprintf(stderr, "DHCP header TYPE is wrong.\n");
 			continue;
 		}
 
@@ -128,54 +129,68 @@ int main(int argc, char* argv[])
 					head.address = ip.s_addr;
 					head.netmask = mask;
 					head.ttl = TIME_TO_LIVE;
+					head.code = DHCP_CODE_OK;
 					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 						perror("sendto");
 						exit(1);
 					}
                 } else {
-                    fprintf(stderr, "error\n");
-					cli->stat = STAT_WAIT_DISCOVER;
+                    fprintf(stderr, "received data type is not DHCPDISCOVER\nignore.\n");
                 }
                 break;
             case STAT_WAIT_REQUEST:
                 if(head.type == DHCPREQUEST){
-					fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
-					print_dhcp_header(&head);
-					print_client(cli);
+					switch(head.code){
+						case DHCP_CODE_REQ_ALC:
+							fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
+							set_client_timeout(cli, head.ttl);
 
-					set_client_timeout(cli, head.ttl);
-                    // DHCPACKの返信
-                    cli->stat = STAT_WAIT_RELEASE;
-					bzero(&head, sizeof(head));
-					head.type = DHCPACK;
-					head.ttl = cli->exp_time - cli->start_time;
-					head.address = cli->alloc_addr.s_addr;
-					head.netmask = cli->netmask;
-					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
-						perror("sendto");
-						exit(1);
+							print_dhcp_header(&head);
+							print_client(cli);
+
+							// DHCPACKの返信
+							cli->stat = STAT_WAIT_RELEASE;
+							bzero(&head, sizeof(head));
+							head.type = DHCPACK;
+							head.ttl = cli->exp_time - cli->start_time;
+							head.address = cli->alloc_addr.s_addr;
+							head.netmask = cli->netmask;
+							head.code = DHCP_CODE_OK;
+							if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
+								perror("sendto");
+								exit(1);
+							}
+							break;
+						default:
+							fprintf(stderr, "received invalid code.\nignore.\n");
+							break;
 					}
                 } else {
-                    fprintf(stderr, "error\n");
-					cli->stat = STAT_WAIT_DISCOVER;
+                    fprintf(stderr, "received invalid data\nignore.\n");
                 }
                 break;
 			case STAT_WAIT_RELEASE:
 				if(head.type == DHCPREQUEST){
-					fprintf(stderr, "keeping STAT_WAIT_RELEASE\n");
-					set_client_timeout(cli, head.ttl);
-					bzero(&head, sizeof(head));
-					head.type = DHCPACK;
-					head.ttl = cli->exp_time - cli->start_time;
-					head.address = cli->alloc_addr.s_addr;
-					head.netmask = cli->netmask;
-					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
-						perror("sendto");
-						exit(1);
+					switch(head.code){
+						case DHCP_CODE_REQ_EXT:
+							fprintf(stderr, "keeping STAT_WAIT_RELEASE\n");
+							set_client_timeout(cli, head.ttl);
+							bzero(&head, sizeof(head));
+							head.type = DHCPACK;
+							head.ttl = cli->exp_time - cli->start_time;
+							head.address = cli->alloc_addr.s_addr;
+							head.netmask = cli->netmask;
+							if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
+								perror("sendto");
+								exit(1);
+							}
+							break;
+						default:
+							fprintf(stderr, "received invalid code.\nignore.\n");
+							break;
 					}
 				} else {
-					fprintf(stderr, "error\n");
-					cli->stat = STAT_WAIT_DISCOVER;
+					fprintf(stderr, "received invalid data\nignore.\n");
 				}
 				break;			
         }
@@ -194,16 +209,17 @@ void timeout_handler(int sig)
 	struct client *c = client_list.tout_fp;
 
 	switch(c->stat){
-		case STAT_WAIT_DISCOVER:
 		case STAT_WAIT_REQUEST:
-			fprintf(stderr, "Timeout\n");
+			fprintf(stderr, "Timeout\nclient state back to STAT_INITIAL.\n");
 			release_client(c);
 			break;
 		case STAT_WAIT_RELEASE:
-			fprintf(stderr, "Timeout\n");
+			fprintf(stderr, "Expired using IP Address.\nExit this client.\n");
 			release_client(c);
 			break;
 	}
+
+	delete_tout_list(c);
 	update_alarm();
 }
 
@@ -215,18 +231,19 @@ void update_alarm()
 	if(c == &client_list) return;
 
 	gettimeofday(&tp, NULL);
-	diff = (int)tp.tv_sec - c->exp_time;
+	diff = c->exp_time - (int)tp.tv_sec;
 
-	if(diff <= 0){
-		timeout_handler(0);
-		return;
-	} else {
+	if(diff > 0){
 		set_alarm(diff);
-	}	
+	} else {
+		fprintf(stderr, "call timeout handler\n");
+		timeout_handler(0);
+	}
 }
 
 void set_alarm(int time)
 {
+	fprintf(stderr, "set alarm in %d seconds.\n", time);
 	alarm(time);
 }
 
@@ -249,11 +266,38 @@ void set_client_timeout(struct client* c, uint16_t ttl)
 	c->start_time = (int)tp.tv_sec;
 	c->exp_time = (int)tp.tv_sec + ttl;
 
+	delete_tout_list(c);
 	insert_tout_list(c);
 
-	if(client_list.tout_fp == c){
-		set_alarm(ttl);
+	update_alarm();
+//	if(client_list.tout_fp == c){
+//		fprintf(stderr, "in set_alarm\n");
+//		set_alarm(ttl);
+//	}
+}
+
+void print_tout_list()
+{
+    int i;
+    struct client* c = &client_list;
+    fprintf(stderr, "/////print tout list//////\n");
+    for(i = 0; ;i++){
+        c = c->tout_fp;
+        if(c == &client_list) break;
+        fprintf(stderr, "%2d. %s\n", i, inet_ntoa(c->cli_id));
+    }
+}
+
+void delete_tout_list(struct client* c)
+{
+	if(c->tout_bp != NULL && c->tout_fp != NULL){
+		c->tout_bp->tout_fp = c->tout_fp;
+		c->tout_fp->tout_bp = c->tout_bp;
 	}
+	c->tout_bp = NULL;
+	c->tout_fp = NULL;
+
+	print_tout_list();
 }
 
 void insert_tout_list(struct client* cl)
@@ -261,19 +305,17 @@ void insert_tout_list(struct client* cl)
 	struct client* c = &client_list;
 
 	while((c = c->tout_fp) != &client_list){
-		if(c->exp_time < cl->exp_time){
+		fprintf(stderr, "****tout_list exp_time:%d****\n", c->exp_time);
+		if(c->exp_time > cl->exp_time){
+			fprintf(stderr, "break\n");
 			break;
 		}
 	}
 	
-	if(cl->tout_fp != NULL && cl->tout_bp != NULL){
-		cl->tout_fp->tout_bp = cl->tout_bp;
-		cl->tout_bp->tout_fp = cl->tout_fp;
-	}
-	cl->tout_bp = c;
-	cl->tout_fp = c->tout_fp;
-	c->tout_fp->tout_bp = cl;
-	c->tout_fp = cl;
+	cl->tout_fp = c;
+	cl->tout_bp = c->tout_bp;
+	c->tout_bp->tout_fp = cl;
+	c->tout_bp = cl;
 }
 
 struct client* get_client(struct in_addr* ip, int type)
@@ -318,18 +360,17 @@ void release_client(struct client* c)
 	queue_push(c->alloc_addr, c->netmask);
 	c->bp->fp = c->fp;
 	c->fp->bp = c->bp;
-	if(c->tout_fp != NULL && c->tout_bp != NULL){
-		c->tout_bp->tout_fp = c->tout_fp;
-		c->tout_fp->tout_bp = c->tout_bp;
-	}
+	delete_tout_list(c);
 	free(c);
 }
 
 void print_client(struct client *c)
 {
+	fprintf(stderr, "*********print client info start*********\n");
 	fprintf(stderr, "Client IP Address: %s\n", inet_ntoa(c->cli_id));
 	fprintf(stderr, "Given IP Address: %s\n", inet_ntoa(c->alloc_addr));
 	fprintf(stderr, "Given Netmask: %d\n", c->netmask);
+	fprintf(stderr, "*********print client info end  *********\n");
 }
 
 void read_config(char* file)
