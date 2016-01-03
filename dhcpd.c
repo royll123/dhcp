@@ -18,20 +18,22 @@
 #define TIME_TO_LIVE		40
 
 struct client {
-    struct client *fp; /* 双方向リスト用ポインタ */
-    struct client *bp; /* 双方向リスト用ポインタ */
-    struct client *tout_fp; /* タイムアウト管理用ポインタ */
-    struct client *tout_bp; /* タイムアウト管理用ポインタ */
-    int start_time; /* 使用開始時刻 */
-    int exp_time; /* タイムリミット */
-    short stat; /* クライアントの状態 */
-    struct in_addr cli_id; /* クライアントの識別子 (IP アドレス) */
-    uint16_t cli_port; /* クライアントのポート番号 */
-    struct in_addr alloc_addr; /* クライアントに割り当てた IP アドレス */
-    uint32_t netmask; /* netmask */
+    struct client *fp;
+    struct client *bp;
+    struct client *tout_fp;
+    struct client *tout_bp;
+    int start_time;
+    int exp_time;
+    short stat; 
+    struct in_addr cli_id;
+    uint16_t cli_port;
+    struct in_addr alloc_addr;
+    uint32_t netmask;
 };
-struct client client_list; /* クライアントリストのリストヘッド */
+struct client client_list;
 
+int check_requested_data(struct in_addr, uint32_t, uint16_t);
+int check_address_used(struct in_addr, uint32_t, struct client*);
 void timeout_handler(int);
 void update_alarm();
 void set_alarm(int);
@@ -97,6 +99,9 @@ int main(int argc, char* argv[])
             exit(1);
         }
 
+		// output received data.
+		print_dhcp_header(&head);
+
 		// get client
 		cli = get_client(&skt.sin_addr, head.type);
 		
@@ -153,37 +158,18 @@ int main(int argc, char* argv[])
 								struct client* c;
 								int ttl = head.ttl;
 
-								print_dhcp_header(&head);
 								print_client(cli);
 
 								bzero(&head, sizeof(head));
 
 								// check header
-								c = &client_list;
-
-								if(find_address(ip, mask) == NULL){
-									// Requested invalid ip address
-									fprintf(stderr, "Requested invalid ip address.\nignore.\n");
+								if(check_requested_data(ip, mask, ttl) < 0){
 									break;
 								}
-
-								if(head.ttl > TIME_TO_LIVE){
-									// Requested too long time.
-									fprintf(stderr, "Attempted using too long time.\nignore.\n");
-									break;
-								}
-
-								while((c = c->fp) != &client_list){
-									if(c == cli) continue;
-									if(c->alloc_addr.s_addr == ip.s_addr && cli->netmask == mask){
-										break;
-									}
-								}
-
 
 								head.type = DHCPACK;
 
-								if(c != &client_list){
+								if(check_address_used(ip, mask, cli) < 0){
 									// already allocated address
 									head.code = DHCP_CODE_ERR_OVL;
 								} else {
@@ -243,6 +229,37 @@ int main(int argc, char* argv[])
     }
 
 	free(cli);
+}
+
+int check_requested_data(struct in_addr ip, uint32_t netmask, uint16_t ttl)
+{
+	if(find_address(ip, netmask) == NULL){
+		// Requested invalid ip address
+		fprintf(stderr, "Requested invalid ip address.\nignore.\n");
+		return -1;
+	}
+
+	if(ttl > TIME_TO_LIVE){
+		// Requested too long time.
+		fprintf(stderr, "Attempted using too long time.\nignore.\n");
+		return -1;
+	}
+	return 0;
+}
+
+int check_address_used(struct in_addr ip, uint32_t netmask, struct client* cli)
+{
+	struct client *c = &client_list;
+
+	while((c = c->fp) != &client_list){
+		if(c == cli) continue;
+		if(c->alloc_addr.s_addr == ip.s_addr && cli->netmask == netmask){
+			break;
+		}
+	}
+
+	if(c == &client_list) return 0;
+	else return -1;
 }
 
 void timeout_handler(int sig)
@@ -311,10 +328,6 @@ void set_client_timeout(struct client* c, uint16_t ttl)
 	insert_tout_list(c);
 
 	update_alarm();
-//	if(client_list.tout_fp == c){
-//		fprintf(stderr, "in set_alarm\n");
-//		set_alarm(ttl);
-//	}
 }
 
 void print_tout_list()
@@ -339,7 +352,7 @@ void delete_tout_list(struct client* c)
 	c->tout_bp = NULL;
 	c->tout_fp = NULL;
 
-	print_tout_list();
+//	print_tout_list();
 }
 
 void insert_tout_list(struct client* cl)
@@ -347,9 +360,7 @@ void insert_tout_list(struct client* cl)
 	struct client* c = &client_list;
 
 	while((c = c->tout_fp) != &client_list){
-		fprintf(stderr, "****tout_list exp_time:%d****\n", c->exp_time);
 		if(c->exp_time > cl->exp_time){
-			fprintf(stderr, "break\n");
 			break;
 		}
 	}
