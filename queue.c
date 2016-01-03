@@ -3,13 +3,62 @@
 #include <arpa/inet.h>
 #include "queue.h"
 
+static struct address address_list;
 static struct queue q;
-static int queue_max;
+static int address_freeze;
 
 void queue_init()
 {
+	address_list.fp = &address_list;
+	address_list.bp = &address_list;
 	q.first = NULL;
 	q.last = NULL;
+	address_freeze = 0;
+}
+
+void freeze_address()
+{
+	address_freeze = 1;
+}
+
+
+struct address* find_address(struct in_addr ip, uint32_t netmask)
+{
+	struct address* p;
+	for(p = address_list.fp; p != &address_list; p = p->fp){
+        if(p->ip.s_addr == ip.s_addr && p->netmask == netmask){
+            break;
+        }
+    }
+    if(p != &address_list){
+		return p;
+	} else {
+		return NULL;
+	}
+}
+
+struct address* get_address(struct in_addr ip, uint32_t netmask)
+{
+	struct address* p = find_address(ip, netmask);
+	if(p != NULL) return p;
+	
+	if(address_freeze == 0){
+		p = (struct address*)malloc(sizeof(struct address));
+		if(p == NULL){
+			fprintf(stderr, "cannot allocate memory.\n");
+			exit(1);
+		}
+
+		p->ip = ip;
+		p->netmask = netmask;
+		p->fp = &address_list;
+		p->bp = address_list.bp;
+		address_list.bp->fp = p;
+		address_list.bp = p;
+	} else {
+		p = NULL;
+	}
+	return p;
 }
 
 int queue_push(struct in_addr ip, uint32_t netmask)
@@ -18,16 +67,13 @@ int queue_push(struct in_addr ip, uint32_t netmask)
 	if(q.last == NULL){
 		p = &q.last;
 	} else {
-		p = &q.last->next;
+		p = &q.last->q_next;
 	}
-	*p = (struct address*)malloc(sizeof(struct address));
-	if(p == NULL){
-		fprintf(stderr, "cannot allocate memory.\n");
-		exit(1);
-	}
-	(*p)->ip = ip;
-	(*p)->netmask = netmask;
-	(*p)->next = NULL;
+	
+	*p = get_address(ip, netmask);
+	if(*p == NULL) return -1;
+
+	(*p)->q_next = NULL;
 	q.last = *p;
 	if(q.first == NULL){
 		q.first = *p;
@@ -44,12 +90,21 @@ int queue_pop(struct in_addr *ip, uint32_t *netmask)
 	*ip = p->ip;
 	*netmask = p->netmask;
 
-	q.first = p->next;
+	q.first = p->q_next;
 	if(q.last == p){
 		q.last = NULL;
 	}
-	free(p);
 	return 0;
+}
+
+void queue_end()
+{
+	struct address *p = address_list.fp;
+
+	while(p != &address_list){
+		p = p->fp;
+		free(p->bp);
+	}
 }
 
 void debug_print()
@@ -59,7 +114,7 @@ void debug_print()
 	while(p != NULL){
 		fprintf(stderr, "ip: %s ", inet_ntoa(p->ip));
 		fprintf(stderr, "mask: %d\n", p->netmask);
-		p = p->next;
+		p = p->q_next;
 	}
 	fprintf(stderr, "IP addr queue data end\n");
 }

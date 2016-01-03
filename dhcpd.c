@@ -117,23 +117,28 @@ int main(int argc, char* argv[])
                 if(head.type == DHCPDISCOVER) {
 					struct in_addr ip;
 					uint32_t mask;
+
+					cli->stat = STAT_WAIT_REQUEST;
 					fprintf(stderr, "from STAT_WAIT_DISCOVER to STAT_WAIT_REQUEST\n");
-					set_client_timeout(cli, RECV_TIMEOUT);
-                    // IPアドレスの選択、DHCPOFFERの返信
-					queue_pop(&ip, &mask);
-                    cli->stat = STAT_WAIT_REQUEST;
-					cli->alloc_addr = ip;
-					cli->netmask = mask;
+					
 					bzero(&head, sizeof(head));
 					head.type = DHCPOFFER;
-					head.address = ip.s_addr;
-					head.netmask = mask;
-					head.ttl = TIME_TO_LIVE;
-					head.code = DHCP_CODE_OK;
+					if(queue_pop(&ip, &mask) == -1){
+						// no resources of ip address
+						head.code = DHCP_CODE_ERR_NONE;
+					} else {
+						cli->alloc_addr = ip;
+						cli->netmask = mask;
+						head.address = ip.s_addr;
+						head.netmask = mask;
+						head.ttl = TIME_TO_LIVE;
+						head.code = DHCP_CODE_OK;
+					}
 					if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 						perror("sendto");
 						exit(1);
 					}
+					set_client_timeout(cli, RECV_TIMEOUT);
                 } else {
                     fprintf(stderr, "received data type is not DHCPDISCOVER\nignore.\n");
                 }
@@ -142,23 +147,59 @@ int main(int argc, char* argv[])
                 if(head.type == DHCPREQUEST){
 					switch(head.code){
 						case DHCP_CODE_REQ_ALC:
-							fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
-							set_client_timeout(cli, head.ttl);
+							{
+								struct in_addr ip = { head.address };
+								uint32_t mask = head.netmask;
+								struct client* c;
+								int ttl = head.ttl;
 
-							print_dhcp_header(&head);
-							print_client(cli);
+								print_dhcp_header(&head);
+								print_client(cli);
 
-							// DHCPACKの返信
-							cli->stat = STAT_WAIT_RELEASE;
-							bzero(&head, sizeof(head));
-							head.type = DHCPACK;
-							head.ttl = cli->exp_time - cli->start_time;
-							head.address = cli->alloc_addr.s_addr;
-							head.netmask = cli->netmask;
-							head.code = DHCP_CODE_OK;
-							if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
-								perror("sendto");
-								exit(1);
+								bzero(&head, sizeof(head));
+
+								// check header
+								c = &client_list;
+
+								if(find_address(ip, mask) == NULL){
+									// Requested invalid ip address
+									fprintf(stderr, "Requested invalid ip address.\nignore.\n");
+									break;
+								}
+
+								if(head.ttl > TIME_TO_LIVE){
+									// Requested too long time.
+									fprintf(stderr, "Attempted using too long time.\nignore.\n");
+									break;
+								}
+
+								while((c = c->fp) != &client_list){
+									if(c == cli) continue;
+									if(c->alloc_addr.s_addr == ip.s_addr && cli->netmask == mask){
+										break;
+									}
+								}
+
+
+								head.type = DHCPACK;
+
+								if(c != &client_list){
+									// already allocated address
+									head.code = DHCP_CODE_ERR_OVL;
+								} else {
+									cli->stat = STAT_WAIT_RELEASE;
+                	                fprintf(stderr, "from STAT_WAIT_REQUEST to STAT_WAIT_RELEASE\n");
+									head.code = DHCP_CODE_OK;
+									head.ttl = ttl;
+									head.address = cli->alloc_addr.s_addr;
+									head.netmask = cli->netmask;
+									set_client_timeout(cli, head.ttl);
+								}
+
+								if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
+									perror("sendto");
+									exit(1);
+								}
 							}
 							break;
 						default:
@@ -293,6 +334,7 @@ void delete_tout_list(struct client* c)
 	if(c->tout_bp != NULL && c->tout_fp != NULL){
 		c->tout_bp->tout_fp = c->tout_fp;
 		c->tout_fp->tout_bp = c->tout_bp;
+		update_alarm();
 	}
 	c->tout_bp = NULL;
 	c->tout_fp = NULL;
@@ -356,7 +398,7 @@ struct client* create_client()
 
 void release_client(struct client* c)
 {
-	fprintf(stderr, "release client using ip:%s\n", inet_ntoa(c->alloc_addr));
+	fprintf(stderr, "release client ip:%s\n", inet_ntoa(c->cli_id));
 	queue_push(c->alloc_addr, c->netmask);
 	c->bp->fp = c->fp;
 	c->fp->bp = c->bp;
@@ -402,6 +444,9 @@ void read_config(char* file)
 	}
 
 	fclose(fp);
+
+	// finish adding ip resources
+	freeze_address();
 
 	debug_print();
 }
