@@ -127,6 +127,7 @@ int main(int argc, char* argv[])
 			continue;
 		}
 
+		// go to exit from all state when received release.
 		if(head.type == DHCPRELEASE){
 			release_client(cli);
 			continue;
@@ -534,7 +535,6 @@ void read_config(char* file)
 {
 	char line[512];
 	char ip[56];
-	char mask[56];
 	struct in_addr ipaddr;
 	uint32_t netmask;
 	FILE *fp;
@@ -550,7 +550,6 @@ void read_config(char* file)
 	errno = 0;
 	while(fgets(line, 512 - 1, fp) != NULL){
 		bzero(ip, 56);
-		bzero(mask, 56);
 		if(sscanf(line, "%55s %d", ip, &netmask) != 2){
 			if(errno != 0){
 				perror("sscanf");
@@ -568,7 +567,6 @@ void read_config(char* file)
 			fprintf(stderr, "Config file has an invalid netmask\n");
 			exit(1);
 		}
-	//	netmask = (uint32_t)atoi(mask);
 		queue_push(ipaddr, netmask);
 		bzero(line, 512);
 	}
