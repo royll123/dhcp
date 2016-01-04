@@ -317,7 +317,7 @@ void exec_timeout()
 
     switch(c->stat){
         case STAT_WAIT_REQUEST:
-            fprintf(stderr, "%s: Timeout. Client state back to STAT_INITIAL.\n", inet_ntoa(c->cli_id));
+            fprintf(stderr, "%s: Timeout. Exit this client.\n", inet_ntoa(c->cli_id));
             release_client(c);
             break;
         case STAT_WAIT_RELEASE:
