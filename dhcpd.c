@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <errno.h>
 #include "dhcp_common.h"
 #include "queue.h"
 
@@ -32,8 +33,11 @@ struct client {
 };
 struct client client_list;
 
+int alarm_flag = 0;
+
 int check_requested_data(struct in_addr, uint32_t, uint16_t);
 int check_address_used(struct in_addr, uint32_t, struct client*);
+void exec_timeout();
 void timeout_handler(int);
 void update_alarm();
 void set_alarm(int);
@@ -95,8 +99,16 @@ int main(int argc, char* argv[])
 
 	// main loop
     for(;;){
+		if(alarm_flag){
+			exec_timeout();
+		}
+
         if((count = recvfrom(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, &sktlen)) < 0){
-            perror("recvfrom");
+            if(errno == EINTR && alarm_flag){
+				exec_timeout();
+				continue;
+			}
+			perror("recvfrom");
             exit(1);
         }
 
@@ -297,23 +309,30 @@ int check_address_used(struct in_addr ip, uint32_t netmask, struct client* cli)
 	else return -1;
 }
 
+void exec_timeout()
+{
+    struct client *c = client_list.tout_fp;
+
+    switch(c->stat){
+        case STAT_WAIT_REQUEST:
+            fprintf(stderr, "%s: Timeout. Client state back to STAT_INITIAL.\n", inet_ntoa(c->cli_id));
+            release_client(c);
+            break;
+        case STAT_WAIT_RELEASE:
+            fprintf(stderr, "%s: Allocated IP Address expired. Exit this client.\n", inet_ntoa(c->cli_id));
+            release_client(c);
+            break;
+    }
+
+    delete_tout_list(c);
+    update_alarm();
+
+	alarm_flag = 0;
+}
+
 void timeout_handler(int sig)
 {
-	struct client *c = client_list.tout_fp;
-
-	switch(c->stat){
-		case STAT_WAIT_REQUEST:
-			fprintf(stderr, "%s: Timeout. Client state back to STAT_INITIAL.\n", inet_ntoa(c->cli_id));
-			release_client(c);
-			break;
-		case STAT_WAIT_RELEASE:
-			fprintf(stderr, "%s: Allocated IP Address expired. Exit this client.\n", inet_ntoa(c->cli_id));
-			release_client(c);
-			break;
-	}
-
-	delete_tout_list(c);
-	update_alarm();
+	alarm_flag = 1;
 }
 
 void update_alarm()
@@ -332,8 +351,7 @@ void update_alarm()
 	if(diff > 0){
 		set_alarm(diff);
 	} else {
-		fprintf(stderr, "call timeout handler\n");
-		timeout_handler(0);
+		exec_timeout();
 	}
 }
 
@@ -347,7 +365,7 @@ void set_signal()
 {
 	struct sigaction act;
 	act.sa_handler = &timeout_handler;
-	act.sa_flags = SA_RESTART;
+	act.sa_flags = 0;
 
 	if(sigaction(SIGALRM, &act, NULL) < 0){
 		perror("sigaction");
