@@ -42,6 +42,8 @@ void timeout_handler(int);
 void update_alarm();
 void set_alarm(int);
 void set_signal();
+void block_sig_alrm();
+void unblock_sig_alrm();
 void set_client_timeout(struct client* c, uint16_t ttl);
 void delete_tout_list(struct client*);
 void insert_tout_list(struct client*);
@@ -373,6 +375,34 @@ void set_signal()
 	}
 }
 
+void block_sig_alrm()
+{
+	sigset_t mask;
+	if(sigaddset(&mask, SIGALRM) < 0){
+		perror("sigaddset");
+		exit(1);
+	}
+
+	if(sigprocmask(SIG_BLOCK, &mask, NULL) < 0){
+		perror("sigprocmask");
+		exit(1);
+	}
+}
+
+void unblock_sig_alrm()
+{
+	sigset_t mask;
+    if(sigaddset(&mask, SIGALRM) < 0){
+        perror("sigaddset");
+        exit(1);
+    }
+
+    if(sigprocmask(SIG_UNBLOCK, &mask, NULL) < 0){
+        perror("sigprocmask");
+        exit(1);
+    }
+}
+
 void set_client_timeout(struct client* c, uint16_t ttl)
 {
 	struct timeval tp;
@@ -400,6 +430,7 @@ void print_tout_list()
 
 void delete_tout_list(struct client* c)
 {
+	block_sig_alrm();
 	if(c->tout_bp != NULL && c->tout_fp != NULL){
 		c->tout_bp->tout_fp = c->tout_fp;
 		c->tout_fp->tout_bp = c->tout_bp;
@@ -407,14 +438,14 @@ void delete_tout_list(struct client* c)
 	}
 	c->tout_bp = NULL;
 	c->tout_fp = NULL;
-
-//	print_tout_list();
+	unblock_sig_alrm();
 }
 
 void insert_tout_list(struct client* cl)
 {
 	struct client* c = &client_list;
-
+	
+	block_sig_alrm();
 	while((c = c->tout_fp) != &client_list){
 		if(c->exp_time > cl->exp_time){
 			break;
@@ -425,6 +456,8 @@ void insert_tout_list(struct client* cl)
 	cl->tout_bp = c->tout_bp;
 	c->tout_bp->tout_fp = cl;
 	c->tout_bp = cl;
+
+	unblock_sig_alrm();
 }
 
 struct client* get_client(struct in_addr* ip, int type)
