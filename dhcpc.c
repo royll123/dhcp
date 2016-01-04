@@ -60,7 +60,7 @@ int main(int argc, char* argv[])
 	skt.sin_port = htons(port);
 	skt.sin_addr = ipaddr;
 	status = STAT_INITIAL;
-	fprintf(stderr, "STAT_INITIAL\n");
+	printf("STAT_INITIAL\n");
 
 	for(;;){
 		if(kill_flag == 1){
@@ -70,7 +70,7 @@ int main(int argc, char* argv[])
 				perror("sendto");
 				exit(1);
 			}
-			fprintf(stderr, "Send\n");
+			printf("Send\n");
 			print_dhcp_header(&head);
 			break;
 		}
@@ -84,10 +84,10 @@ int main(int argc, char* argv[])
         			perror("sendto");
    			    	exit(1);
    				}
-				fprintf(stderr, "Send\n");
+				printf("Send\n");
 				print_dhcp_header(&head);
 				status = STAT_WAIT_OFFER;
-				fprintf(stderr, "from STAT_INITIAL to STAT_WAIT_OFFER\n");
+				printf("State Changed from STAT_INITIAL to STAT_WAIT_OFFER\n");
 				break;
 			case STAT_WAIT_OFFER:
 				t.tv_sec = 10;
@@ -101,7 +101,7 @@ int main(int argc, char* argv[])
 				if(result == 0){
 					fprintf(stderr, "timeout\n");
 					status = STAT_INITIAL;
-					fprintf(stderr, "from STAT_WAIT_OFFER to STAT_INITIAL\n");
+					printf("State Changed from STAT_WAIT_OFFER to STAT_INITIAL\n");
 					break;
 				}
 				if(FD_ISSET(s, &rdfds)){
@@ -110,7 +110,7 @@ int main(int argc, char* argv[])
 						exit(1);
 					}
 
-					fprintf(stderr, "Receive\n");
+					printf("Receive\n");
 					print_dhcp_header(&head);
 
 					if(head.type == DHCPOFFER){
@@ -128,10 +128,10 @@ int main(int argc, char* argv[])
 								perror("sendto");
 								exit(1);
 							}
-							fprintf(stderr, "Send\n");
+							printf("Send\n");
 							print_dhcp_header(&head);
 							status = STAT_WAIT_REPLY;
-							fprintf(stderr, "from STAT_WAIT_OFFER to STAT_WAIT_REPLY\n");
+							printf("State changed from STAT_WAIT_OFFER to STAT_WAIT_REPLY\n");
 						} else if(head.code == DHCP_CODE_ERR_NONE){
 							fprintf(stderr, "ERROR:%d There is no ip resource. Exit.\n", head.code);
 							exit(1);
@@ -156,7 +156,7 @@ int main(int argc, char* argv[])
                 if(result == 0){
                     fprintf(stderr, "timeout\n");
                     status = STAT_INITIAL;
-					fprintf(stderr, "from STAT_WAIT_REPLY to STAT_INITIAL\n");
+					printf("State changed from STAT_WAIT_REPLY to STAT_INITIAL\n");
                     break;
                 }
                 if(FD_ISSET(s, &rdfds)){
@@ -165,22 +165,22 @@ int main(int argc, char* argv[])
 						exit(1);
 					}
 
-					fprintf(stderr, "Receive\n");
+					printf("Receive\n");
 					print_dhcp_header(&head);
 
 					if(head.type == DHCPACK){
 						if(head.code == DHCP_CODE_OK){
-							status = STAT_WAIT_TIME;
-							fprintf(stderr, "from STAT_WAIT_REPLY to STAT_WAIT_TIME\n");
 							my_ttl = head.ttl;
 							my_addr = head.address;
 							my_netmask = head.netmask;
 							alarm(my_ttl/2);
 							print_allocated_address(my_addr, my_netmask, my_ttl);
+							status = STAT_WAIT_TIME;
+							printf("State changed from STAT_WAIT_REPLY to STAT_WAIT_TIME\n");
 						} else if(head.code == DHCP_CODE_ERR_OVL){
 							fprintf(stderr, "ERROR:%d Already Allocated IP Address.\n", head.code);
 							status = STAT_INITIAL;
-							fprintf(stderr, "from STAT_WAIT_REPLY to STAT_INITIAL\n");
+							printf("State changed from STAT_WAIT_REPLY to STAT_INITIAL\n");
 						} else {
 							fprintf(stderr, "Received invalid DHCP data. Ignore.\n");
 						}
@@ -206,10 +206,10 @@ int main(int argc, char* argv[])
 						perror("sendto");
 						exit(1);
 					}
-					fprintf(stderr, "Send\n");
+					printf("Send\n");
 					print_dhcp_header(&head);
 					status = STAT_WAIT_REPLY;
-					fprintf(stderr, "from STAT_WAIT_TIME to STAT_WAIT_REPLY\n");
+					printf("State changed from STAT_WAIT_TIME to STAT_WAIT_REPLY\n");
 				 }
 				break;
 		}
@@ -253,9 +253,9 @@ void kill_process(int sig)
 void print_allocated_address(in_addr_t ip, uint32_t netmask, uint16_t ttl)
 {
 	struct in_addr i = {ip};
-	fprintf(stderr, "---  Allocated IP Address  ---\n");
-	fprintf(stderr, "IP: %s\n", inet_ntoa(i));
-	fprintf(stderr, "Netmask: %d\n", netmask);
-	fprintf(stderr, "Time to Live: %d\n", ttl);
-	fprintf(stderr, "---           end          ---\n");
+	printf("---  Allocated IP Address  ---\n");
+	printf("IP: %s\n", inet_ntoa(i));
+	printf("Netmask: %d\n", netmask);
+	printf("Time to Live: %d\n", ttl);
+	printf("---           end          ---\n");
 }

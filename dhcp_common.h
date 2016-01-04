@@ -27,5 +27,4 @@ struct dhcph {
 };
 
 void print_dhcp_header(struct dhcph*);
-
 #endif

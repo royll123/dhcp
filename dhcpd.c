@@ -115,7 +115,7 @@ int main(int argc, char* argv[])
         }
 
 		// output received data.
-		fprintf(stderr, "Receive\n");
+		printf("Receive\n");
 		print_dhcp_header(&head);
 
 		// get client
@@ -128,7 +128,6 @@ int main(int argc, char* argv[])
 		}
 
 		if(head.type == DHCPRELEASE){
-			fprintf(stderr, "%s: release client\n", inet_ntoa(cli->cli_id));
 			release_client(cli);
 			continue;
 		}
@@ -156,7 +155,7 @@ int main(int argc, char* argv[])
 						exit(1);
 					}
 					set_client_timeout(cli, RECV_TIMEOUT);
-					fprintf(stderr, "Send\n");
+					printf("Send\n");
 					print_dhcp_header(&head);
 
 					cli->stat = STAT_WAIT_REQUEST;
@@ -202,7 +201,7 @@ int main(int argc, char* argv[])
 									perror("sendto");
 									exit(1);
 								}
-								fprintf(stderr, "Send\n");
+								printf("Send\n");
 								print_dhcp_header(&head);
 
 								set_client_timeout(cli,head.ttl);
@@ -246,7 +245,7 @@ int main(int argc, char* argv[])
 									perror("sendto");
 									exit(1);
 								}
-								fprintf(stderr, "Send\n");
+								printf("Send\n");
 								print_dhcp_header(&head);
 
 								if(cli->stat != STAT_WAIT_RELEASE){
@@ -284,13 +283,13 @@ int check_requested_data(struct in_addr ip, uint32_t netmask, uint16_t ttl)
 {
 	if(find_address(ip, netmask) == NULL){
 		// Requested invalid ip address
-		fprintf(stderr, "Requested invalid ip address.\nignore.\n");
+		fprintf(stderr, "Requested invalid ip address. Ignore.\n");
 		return -1;
 	}
 
 	if(ttl > TIME_TO_LIVE){
 		// Requested too long time.
-		fprintf(stderr, "Attempted using too long time.\nignore.\n");
+		fprintf(stderr, "Attempted using too long time. Ignore.\n");
 		return -1;
 	}
 	return 0;
@@ -321,7 +320,7 @@ void exec_timeout()
             release_client(c);
             break;
         case STAT_WAIT_RELEASE:
-            fprintf(stderr, "%s: Allocated IP Address expired. Exit this client.\n", inet_ntoa(c->cli_id));
+            printf("%s: Allocated IP Address expired. Exit this client.\n", inet_ntoa(c->cli_id));
             release_client(c);
             break;
     }
@@ -359,7 +358,6 @@ void update_alarm()
 
 void set_alarm(int time)
 {
-//	fprintf(stderr, "set alarm in %d seconds.\n", time);
 	alarm(time);
 }
 
@@ -414,18 +412,6 @@ void set_client_timeout(struct client* c, uint16_t ttl)
 	insert_tout_list(c);
 
 	update_alarm();
-}
-
-void print_tout_list()
-{
-    int i;
-    struct client* c = &client_list;
-    fprintf(stderr, "/////print tout list//////\n");
-    for(i = 0; ;i++){
-        c = c->tout_fp;
-        if(c == &client_list) break;
-        fprintf(stderr, "%2d. %s\n", i, inet_ntoa(c->cli_id));
-    }
 }
 
 void delete_tout_list(struct client* c)
@@ -498,9 +484,9 @@ struct client* create_client()
 
 void release_client(struct client* c)
 {
-	fprintf(stderr, "%s: release client\n", inet_ntoa(c->cli_id));
+	printf("%s: Release client\n", inet_ntoa(c->cli_id));
 	if(queue_push(c->alloc_addr, c->netmask) == 0){
-		fprintf(stderr, "free ip:%s netmask:%d\n", inet_ntoa(c->alloc_addr), c->netmask);
+		printf("Free ip:%s netmask:%d\n", inet_ntoa(c->alloc_addr), c->netmask);
 	}
 	c->bp->fp = c->fp;
 	c->fp->bp = c->bp;
@@ -510,12 +496,12 @@ void release_client(struct client* c)
 
 void print_client(struct client *c)
 {
-	fprintf(stderr, "*********print client info start*********\n");
-	fprintf(stderr, "Client IP Address: %s\n", inet_ntoa(c->cli_id));
-	fprintf(stderr, "Given IP Address: %s\n", inet_ntoa(c->alloc_addr));
-	fprintf(stderr, "Given Netmask: %d\n", c->netmask);
-	fprintf(stderr, "Given TTL: %d\n", c->exp_time - c->start_time);
-	fprintf(stderr, "*********print client info end  *********\n");
+	printf("*********print client info start*********\n");
+	printf("Client IP Address: %s\n", inet_ntoa(c->cli_id));
+	printf("Given IP Address: %s\n", inet_ntoa(c->alloc_addr));
+	printf("Given Netmask: %d\n", c->netmask);
+	printf("Given TTL: %d\n", c->exp_time - c->start_time);
+	printf("*********print client info end  *********\n");
 }
 
 void get_status_string(int stat, char* str, int size)
@@ -541,7 +527,7 @@ void print_status_change(int pre, int post, struct in_addr* id)
 	char str_pre[24] = {0}, str_post[24] = {0};
 	get_status_string(pre, str_pre, sizeof(str_pre)-1);
 	get_status_string(post, str_post, sizeof(str_post)-1);
-	fprintf(stderr, "%s: from %s to %s\n", inet_ntoa(*id), str_pre, str_post);
+	printf("%s: State changed from %s to %s\n", inet_ntoa(*id), str_pre, str_post);
 }
 
 void read_config(char* file)
