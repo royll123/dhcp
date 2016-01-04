@@ -547,13 +547,28 @@ void read_config(char* file)
 	}
 
 	bzero(line, 512);
-
+	errno = 0;
 	while(fgets(line, 512 - 1, fp) != NULL){
 		bzero(ip, 56);
 		bzero(mask, 56);
-		sscanf(line, "%55s %55s", ip, mask);
-		inet_aton(ip, &ipaddr);
-		netmask = (uint32_t)atoi(mask);
+		if(sscanf(line, "%55s %d", ip, &netmask) != 2){
+			if(errno != 0){
+				perror("sscanf");
+				exit(1);
+			} else {
+				fprintf(stderr, "Config file must has some lines of the format, \"xxx.xxx.xxx.xxx xx\" \n");
+				exit(1);
+			}
+		}
+		if(inet_aton(ip, &ipaddr) == 0){
+			fprintf(stderr, "Config file has an invalid address\n");
+			exit(1);
+		}
+		if(netmask >= 32){
+			fprintf(stderr, "Config file has an invalid netmask\n");
+			exit(1);
+		}
+	//	netmask = (uint32_t)atoi(mask);
 		queue_push(ipaddr, netmask);
 		bzero(line, 512);
 	}
