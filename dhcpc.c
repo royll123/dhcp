@@ -18,7 +18,7 @@
 void set_signal();
 void timeout_handler(int);
 void kill_process(int);
-void print_allocated_address(in_addr_t ip, uint32_t netmask, uint16_t ttl);
+void print_allocated_address(in_addr_t ip, in_addr_t netmask, uint16_t ttl);
 
 int alrm_flag = 0;
 int kill_flag = 0;
@@ -33,7 +33,7 @@ int main(int argc, char* argv[])
 	int status;
 	struct dhcph head;
 	in_addr_t my_addr;
-	uint32_t my_netmask;
+	in_addr_t my_netmask;
 	uint16_t my_ttl;
 	int result;
 	fd_set rdfds;
@@ -250,12 +250,13 @@ void kill_process(int sig)
 	kill_flag = 1;
 }
 
-void print_allocated_address(in_addr_t ip, uint32_t netmask, uint16_t ttl)
+void print_allocated_address(in_addr_t ip, in_addr_t netmask, uint16_t ttl)
 {
 	struct in_addr i = {ip};
+	struct in_addr j = {netmask};
 	printf("---  Allocated IP Address  ---\n");
 	printf("IP: %s\n", inet_ntoa(i));
-	printf("Netmask: %d\n", netmask);
+	printf("Netmask: %s\n", inet_ntoa(j));
 	printf("Time to Live: %d\n", ttl);
 	printf("---           end          ---\n");
 }

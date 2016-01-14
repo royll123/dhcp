@@ -29,14 +29,14 @@ struct client {
     struct in_addr cli_id;
     uint16_t cli_port;
     struct in_addr alloc_addr;
-    uint32_t netmask;
+    struct in_addr netmask;
 };
 struct client client_list;
 
 int alarm_flag = 0;
 
-int check_requested_data(struct in_addr, uint32_t, uint16_t);
-int check_address_used(struct in_addr, uint32_t, struct client*);
+int check_requested_data(struct in_addr, struct in_addr, uint16_t);
+int check_address_used(struct in_addr, struct in_addr, struct client*);
 void exec_timeout();
 void timeout_handler(int);
 void update_alarm();
@@ -115,7 +115,7 @@ int main(int argc, char* argv[])
         }
 
 		// output received data.
-		printf("Receive\n");
+		printf("Receive from %s\n", inet_ntoa(skt.sin_addr));
 		print_dhcp_header(&head);
 
 		// get client
@@ -137,7 +137,7 @@ int main(int argc, char* argv[])
             case STAT_WAIT_DISCOVER:
                 if(head.type == DHCPDISCOVER) {
 					struct in_addr ip;
-					uint32_t mask;
+					struct in_addr mask;
 
 					head.type = DHCPOFFER;
 					if(queue_pop(&ip, &mask) == -1){
@@ -147,7 +147,7 @@ int main(int argc, char* argv[])
 						cli->alloc_addr = ip;
 						cli->netmask = mask;
 						head.address = ip.s_addr;
-						head.netmask = mask;
+						head.netmask = mask.s_addr;
 						head.ttl = TIME_TO_LIVE;
 						head.code = DHCP_CODE_OK;
 					}
@@ -156,7 +156,7 @@ int main(int argc, char* argv[])
 						exit(1);
 					}
 					set_client_timeout(cli, RECV_TIMEOUT);
-					printf("Send\n");
+					printf("Send to %s\n", inet_ntoa(cli->cli_id));
 					print_dhcp_header(&head);
 
 					cli->stat = STAT_WAIT_REQUEST;
@@ -171,11 +171,9 @@ int main(int argc, char* argv[])
 						case DHCP_CODE_REQ_ALC:
 							{
 								struct in_addr ip = { head.address };
-								uint32_t mask = head.netmask;
+								struct in_addr mask = { head.netmask };
 								struct client* c;
 								int ttl = head.ttl;
-
-								print_client(cli);
 
 								bzero(&head, sizeof(head));
 
@@ -191,21 +189,30 @@ int main(int argc, char* argv[])
 									head.code = DHCP_CODE_ERR_OVL;
 									cli->stat = STAT_WAIT_DISCOVER;
 								} else {
+									if(cli->alloc_addr.s_addr != ip.s_addr || cli->netmask.s_addr != mask.s_addr){
+										// allocate ip different with offered
+										queue_push(cli->alloc_addr, cli->netmask);
+									}
+
 									cli->stat = STAT_WAIT_RELEASE;
+									cli->alloc_addr = ip;
+									cli->netmask = mask;
 									head.code = DHCP_CODE_OK;
 									head.ttl = ttl;
-									head.address = cli->alloc_addr.s_addr;
-									head.netmask = cli->netmask;
+									head.address = ip.s_addr;
+									head.netmask = mask.s_addr;
+									set_client_timeout(cli, head.ttl);
+									printf("Allocated ip address\n");
+									print_client(cli);
 								}
 
 								if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 									perror("sendto");
 									exit(1);
 								}
-								printf("Send\n");
+								printf("Send to %s\n", inet_ntoa(cli->cli_id));
 								print_dhcp_header(&head);
 
-								set_client_timeout(cli,head.ttl);
 								print_status_change(STAT_WAIT_REQUEST, cli->stat, &cli->cli_id);
 							}
 							break;
@@ -223,7 +230,7 @@ int main(int argc, char* argv[])
 						case DHCP_CODE_REQ_EXT:
 							{
 								struct in_addr ip = { head.address };
-								uint32_t mask = head.netmask;
+								struct in_addr mask = { head.netmask };
 								uint16_t ttl = head.ttl;
 
 								bzero(&head, sizeof(head));
@@ -233,20 +240,25 @@ int main(int argc, char* argv[])
 								if(check_requested_data(ip, mask, ttl) < 0){
 									break;
 								}
+								if(cli->alloc_addr.s_addr != ip.s_addr ||
+										cli->netmask.s_addr != mask.s_addr){
+									fprintf(stderr, "Requested using different address. Ignore.\n");
+									break;
+								}
 								if(check_address_used(ip, mask, cli) < 0){
 									head.code = DHCP_CODE_ERR_OVL;
 									cli->stat = STAT_WAIT_DISCOVER;
 								} else {
 									head.ttl = ttl;
 									head.address = cli->alloc_addr.s_addr;
-									head.netmask = cli->netmask;
+									head.netmask = cli->netmask.s_addr;
 								}
 
 								if ((count = sendto(s, &head, sizeof(struct dhcph), 0, (struct sockaddr*)&skt, sktlen)) < 0){
 									perror("sendto");
 									exit(1);
 								}
-								printf("Send\n");
+								printf("Send to %s\n", inet_ntoa(cli->cli_id));
 								print_dhcp_header(&head);
 
 								if(cli->stat != STAT_WAIT_RELEASE){
@@ -280,7 +292,7 @@ int main(int argc, char* argv[])
 	free(cli);
 }
 
-int check_requested_data(struct in_addr ip, uint32_t netmask, uint16_t ttl)
+int check_requested_data(struct in_addr ip, struct in_addr netmask, uint16_t ttl)
 {
 	if(find_address(ip, netmask) == NULL){
 		// Requested invalid ip address
@@ -296,13 +308,13 @@ int check_requested_data(struct in_addr ip, uint32_t netmask, uint16_t ttl)
 	return 0;
 }
 
-int check_address_used(struct in_addr ip, uint32_t netmask, struct client* cli)
+int check_address_used(struct in_addr ip, struct in_addr netmask, struct client* cli)
 {
 	struct client *c = &client_list;
 
 	while((c = c->fp) != &client_list){
 		if(c == cli) continue;
-		if(c->alloc_addr.s_addr == ip.s_addr && cli->netmask == netmask){
+		if(c->alloc_addr.s_addr == ip.s_addr && cli->netmask.s_addr == netmask.s_addr){
 			break;
 		}
 	}
@@ -487,7 +499,8 @@ void release_client(struct client* c)
 {
 	printf("%s: Release client\n", inet_ntoa(c->cli_id));
 	if(queue_push(c->alloc_addr, c->netmask) == 0){
-		printf("Free ip:%s netmask:%d\n", inet_ntoa(c->alloc_addr), c->netmask);
+		printf("Free ip:%s ", inet_ntoa(c->alloc_addr));
+		printf("netmask:%s\n", inet_ntoa(c->netmask));
 	}
 	c->bp->fp = c->fp;
 	c->fp->bp = c->bp;
@@ -497,12 +510,12 @@ void release_client(struct client* c)
 
 void print_client(struct client *c)
 {
-	printf("*********print client info start*********\n");
+	printf("--- print client info start ---\n");
 	printf("Client IP Address: %s\n", inet_ntoa(c->cli_id));
 	printf("Given IP Address: %s\n", inet_ntoa(c->alloc_addr));
-	printf("Given Netmask: %d\n", c->netmask);
+	printf("Given Netmask: %s\n", inet_ntoa(c->netmask));
 	printf("Given TTL: %d\n", c->exp_time - c->start_time);
-	printf("*********print client info end  *********\n");
+	printf("---  print client info end  ---\n");
 }
 
 void get_status_string(int stat, char* str, int size)
@@ -534,9 +547,9 @@ void print_status_change(int pre, int post, struct in_addr* id)
 void read_config(char* file)
 {
 	char line[512];
-	char ip[56];
+	char ip[56],mask[56];
 	struct in_addr ipaddr;
-	uint32_t netmask;
+	struct in_addr netmask;
 	FILE *fp;
 
 	queue_init();
@@ -550,12 +563,12 @@ void read_config(char* file)
 	errno = 0;
 	while(fgets(line, 512 - 1, fp) != NULL){
 		bzero(ip, 56);
-		if(sscanf(line, "%55s %d", ip, &netmask) != 2){
+		if(sscanf(line, "%55s %55s", ip, mask) != 2){
 			if(errno != 0){
 				perror("sscanf");
 				exit(1);
 			} else {
-				fprintf(stderr, "Config file must has some lines of the format, \"xxx.xxx.xxx.xxx xx\" \n");
+				fprintf(stderr, "Config file must has some lines of the format, \"xxx.xxx.xxx.xxx xxx.xxx.xxx.xxx\" \n");
 				exit(1);
 			}
 		}
@@ -563,10 +576,10 @@ void read_config(char* file)
 			fprintf(stderr, "Config file has an invalid address\n");
 			exit(1);
 		}
-		if(netmask >= 32){
-			fprintf(stderr, "Config file has an invalid netmask\n");
-			exit(1);
+		if(inet_aton(mask, &netmask) == 0){
+			fprintf(stderr, "Config file has an invalid address\n");
 		}
+
 		queue_push(ipaddr, netmask);
 		bzero(line, 512);
 	}

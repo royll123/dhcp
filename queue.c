@@ -22,11 +22,11 @@ void freeze_address()
 }
 
 
-struct address* find_address(struct in_addr ip, uint32_t netmask)
+struct address* find_address(struct in_addr ip, struct in_addr netmask)
 {
 	struct address* p;
 	for(p = address_list.fp; p != &address_list; p = p->fp){
-        if(p->ip.s_addr == ip.s_addr && p->netmask == netmask){
+        if(p->ip.s_addr == ip.s_addr && p->netmask.s_addr == netmask.s_addr){
             break;
         }
     }
@@ -37,7 +37,7 @@ struct address* find_address(struct in_addr ip, uint32_t netmask)
 	}
 }
 
-struct address* get_address(struct in_addr ip, uint32_t netmask)
+struct address* get_address(struct in_addr ip, struct in_addr netmask)
 {
 	struct address* p = find_address(ip, netmask);
 	if(p != NULL) return p;
@@ -61,7 +61,7 @@ struct address* get_address(struct in_addr ip, uint32_t netmask)
 	return p;
 }
 
-int queue_push(struct in_addr ip, uint32_t netmask)
+int queue_push(struct in_addr ip, struct in_addr netmask)
 {
 	struct address** p;
 	if(q.last == NULL){
@@ -81,7 +81,7 @@ int queue_push(struct in_addr ip, uint32_t netmask)
 	return 0;
 }
 
-int queue_pop(struct in_addr *ip, uint32_t *netmask)
+int queue_pop(struct in_addr *ip, struct in_addr *netmask)
 {
 	struct address* p = q.first;
 	if(p == NULL){
@@ -113,7 +113,7 @@ void debug_print()
 	fprintf(stderr, "IP addr queue data start\n");
 	while(p != NULL){
 		fprintf(stderr, "ip: %s ", inet_ntoa(p->ip));
-		fprintf(stderr, "mask: %d\n", p->netmask);
+		fprintf(stderr, "mask: %s\n", inet_ntoa(p->netmask));
 		p = p->q_next;
 	}
 	fprintf(stderr, "IP addr queue data end\n");
